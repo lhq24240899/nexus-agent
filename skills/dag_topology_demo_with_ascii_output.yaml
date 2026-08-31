@@ -1,0 +1,46 @@
+description: 在指定目录下编写DAG拓扑算法demo，并处理中文输出在目标环境不可用的问题，改用ASCII输出验证
+improved_at: ''
+name: dag_topology_demo_with_ascii_output
+required_tools:
+- current_time
+- file_read
+- code_exec
+- code_exec
+- file_read
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+steps:
+- description: 获取当前时间戳，用于生成唯一的demo文件名或记录任务时间
+  tool: current_time
+- description: 读取目标目录（如D:/test）的内容或查看已存在的相关文件，了解环境上下文
+  tool: file_read
+- description: 编写DAG拓扑排序算法的demo代码文件，保存在目标目录下
+  tool: code_exec
+- description: 运行刚写好的代码，观察输出结果，初步验证算法正确性
+  tool: code_exec
+- description: 读取执行输出或生成的文件，检查是否因中文输出导致乱码或异常
+  tool: file_read
+- description: 如果中文输出在当前执行环境不可用，修改代码将输出内容改为ASCII编码（如英文或拼音）
+  tool: code_exec
+- description: 重新运行修改后的代码，确认拓扑排序结果正确且输出为ASCII字符，完成验证
+  tool: code_exec
+tags:
+- DAG
+- 拓扑排序
+- 代码生成
+- 中文编码
+- 调试
+- Python
+trigger:
+  keywords:
+  - DAG
+  - 拓扑排序
+  - demo
+  - 有向无环图
+  - 中文输出
+  - ASCII输出
+  patterns: []
+version: 1

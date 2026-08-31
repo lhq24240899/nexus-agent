@@ -1,0 +1,43 @@
+description: 生成Python闭包实现示例，覆盖闭包本质、nonlocal和工厂函数等场景
+improved_at: ''
+name: python_closure_implementation
+required_tools:
+- file_list
+- project_analyze
+- file_read
+- file_write
+- code_exec
+- code_exec
+- code_edit
+- code_exec
+steps:
+- description: 列出项目文件，了解现有代码结构
+  tool: file_list
+- description: 分析项目，确定代码风格和命名规律
+  tool: project_analyze
+- description: 读取相关文件，参考已有示例模式
+  tool: file_read
+- description: 创建新的Python文件，编写闭包实现的多个场景
+  tool: file_write
+- description: 执行代码，验证闭包功能正确
+  tool: code_exec
+- description: 再次执行代码，检查输出结果
+  tool: code_exec
+- description: 根据执行结果编辑代码，修正问题或补充场景
+  tool: code_edit
+- description: 最终执行代码，确认所有闭包场景运行成功
+  tool: code_exec
+tags:
+- Python
+- 闭包
+- 代码生成
+- 示例
+trigger:
+  keywords:
+  - 闭包
+  - closure
+  - nonlocal
+  - 工厂函数
+  - Python
+  patterns: []
+version: 1

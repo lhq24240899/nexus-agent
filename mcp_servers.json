@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "project_filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/nexus_agent"],
+      "enabled": true,
+      "_comment": "文件系统 MCP, 提供目录树/媒体读取/文件搜索等14个工具"
+    },
+    "example_fetch": {
+      "command": "npx",
+      "args": ["-y", "fetch-mcp"],
+      "enabled": false,
+      "_comment": "网页抓取 MCP (需确认包可用后开启)"
+    }
+  }
+}

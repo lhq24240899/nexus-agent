@@ -1,0 +1,35 @@
+description: 诊断电脑卡顿原因并输出健康度报告
+improved_at: ''
+name: computer_slow_diagnosis
+required_tools:
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+steps:
+- description: 获取系统内存使用情况，包括总内存、已用内存、剩余内存和占用率
+  tool: code_exec
+- description: 获取CPU型号和实时负载，判断是否存在高负载
+  tool: code_exec
+- description: 检查各磁盘分区使用空间和剩余空间，识别存储瓶颈
+  tool: code_exec
+- description: 综合分析各项指标，定位主要卡顿原因并生成结构化诊断报告
+  tool: code_exec
+tags:
+- 系统诊断
+- 性能优化
+- 故障排查
+trigger:
+  keywords:
+  - 电脑卡顿
+  - 运行慢
+  - 性能问题
+  - 内存不足
+  - 卡顿诊断
+  patterns: []
+version: 1

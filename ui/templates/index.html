@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus Dual-Core Agent Console</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* ============ 自定义滚动条 ============ */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #30363d; border-radius: 3px;
+    transition: background 0.2s;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  * { scrollbar-width: thin; scrollbar-color: #30363d transparent; }
+
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #0d1117; color: #c9d1d9; height: 100vh; overflow: hidden;
+  }
+  .header {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+  }
+  .header h1 { font-size: 16px; color: #58a6ff; }
+  .header .status { font-size: 12px; color: #8b949e; }
+  .header .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #3fb950; margin-right: 4px;
+  }
+  .main { display: flex; height: calc(100vh - 45px); }
+
+  /* 可拖拽分隔条 */
+  .resizer {
+    width: 5px; cursor: col-resize; background: #30363d;
+    transition: background 0.2s; flex-shrink: 0; z-index: 10;
+  }
+  .resizer:hover, .resizer.active { background: #58a6ff; }
+
+  /* 左侧对话区 */
+  .chat-panel {
+    width: 45%; display: flex; flex-direction: column;
+    min-width: 280px;
+  }
+  .chat-messages {
+    flex: 1; overflow-y: auto; padding: 16px;
+  }
+  .msg { margin-bottom: 16px; max-width: 92%; position: relative; }
+  .msg.user { margin-left: auto; }
+  .msg .bubble {
+    padding: 10px 14px; border-radius: 12px; font-size: 14px;
+    line-height: 1.7; word-break: break-word;
+    user-select: text; -webkit-user-select: text;
+  }
+  .msg.user .bubble { background: #1f6feb; color: #fff; white-space: pre-wrap; }
+  .msg.nexus .bubble {
+    background: #21262d; border: 1px solid #30363d;
+  }
+  /* Markdown 渲染样式 */
+  .msg.nexus .bubble h1, .msg.nexus .bubble h2, .msg.nexus .bubble h3 {
+    margin: 12px 0 6px; color: #58a6ff; font-weight: 600;
+  }
+  .msg.nexus .bubble h1 { font-size: 18px; }
+  .msg.nexus .bubble h2 { font-size: 16px; }
+  .msg.nexus .bubble h3 { font-size: 15px; }
+  .msg.nexus .bubble p { margin: 6px 0; }
+  .msg.nexus .bubble ul, .msg.nexus .bubble ol { margin: 6px 0; padding-left: 24px; }
+  .msg.nexus .bubble li { margin: 3px 0; }
+  .msg.nexus .bubble code {
+    background: #0d1117; padding: 2px 6px; border-radius: 4px;
+    font-family: "Cascadia Code", "Consolas", monospace; font-size: 13px;
+    color: #f0883e;
+  }
+  .msg.nexus .bubble pre {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 12px; overflow-x: auto; margin: 8px 0;
+  }
+  .msg.nexus .bubble pre code {
+    background: none; padding: 0; color: #c9d1d9; font-size: 13px;
+  }
+  .msg.nexus .bubble blockquote {
+    border-left: 3px solid #30363d; padding-left: 12px;
+    margin: 8px 0; color: #8b949e;
+  }
+  .msg.nexus .bubble a { color: #58a6ff; text-decoration: none; }
+  .msg.nexus .bubble a:hover { text-decoration: underline; }
+  .msg.nexus .bubble table {
+    border-collapse: collapse; margin: 8px 0; width: 100%;
+  }
+  .msg.nexus .bubble th, .msg.nexus .bubble td {
+    border: 1px solid #30363d; padding: 6px 10px; text-align: left;
+  }
+  .msg.nexus .bubble th { background: #161b22; }
+  .msg.nexus .bubble hr {
+    border: none; border-top: 1px solid #30363d; margin: 12px 0;
+  }
+  .msg.nexus .bubble strong { color: #f0f6fc; }
+  .msg .meta { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  /* ============ Markdown 渲染样式 ============ */
+  .bubble h1, .bubble h2, .bubble h3, .bubble h4 {
+    margin: 12px 0 8px 0;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .bubble h1 { font-size: 1.3em; border-bottom: 1px solid #30363d; padding-bottom: 6px; }
+  .bubble h2 { font-size: 1.15em; border-bottom: 1px solid #21262d; padding-bottom: 4px; }
+  .bubble h3 { font-size: 1.05em; }
+  .bubble h4 { font-size: 1em; }
+  .bubble p { margin: 6px 0; line-height: 1.6; }
+  .bubble strong { font-weight: 600; color: #e6edf3; }
+  .bubble em { font-style: italic; color: #b1bac4; }
+  .bubble ul, .bubble ol { margin: 6px 0; padding-left: 24px; }
+  .bubble li { margin: 3px 0; line-height: 1.5; }
+  .bubble blockquote {
+    margin: 8px 0;
+    padding: 4px 12px;
+    border-left: 3px solid #30363d;
+    color: #8b949e;
+    background: rgba(48, 54, 61, 0.2);
+    border-radius: 0 4px 4px 0;
+  }
+  .bubble code {
+    background: rgba(110, 118, 129, 0.25);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: 'Consolas', 'Monaco', monospace;
+    color: #e6edf3;
+  }
+  .bubble pre {
+    margin: 10px 0;
+    padding: 12px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .bubble pre code {
+    background: none;
+    padding: 0;
+    font-size: 0.88em;
+    line-height: 1.5;
+    display: block;
+  }
+  .bubble table {
+    border-collapse: collapse;
+    margin: 10px 0;
+    width: 100%;
+  }
+  .bubble th, .bubble td {
+    border: 1px solid #30363d;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .bubble th { background: #161b22; font-weight: 600; }
+  .bubble tr:nth-child(even) { background: rgba(48, 54, 61, 0.2); }
+  .bubble hr {
+    border: none;
+    border-top: 1px solid #30363d;
+    margin: 12px 0;
+  }
+  .bubble a { color: #58a6ff; text-decoration: none; }
+  .bubble a:hover { text-decoration: underline; }
+
+  .msg .context-box {
+    background: #0d1117; border-left: 3px solid #d29922;
+    margin: 8px 0; font-size: 12px;
+    color: #d29922; border-radius: 0 6px 6px 0;
+    overflow: hidden;
+  }
+  .msg .context-header {
+    padding: 6px 12px; cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 6px;
+    font-weight: 600; opacity: 0.8;
+  }
+  .msg .context-header:hover { opacity: 1; background: rgba(210,153,34,0.08); }
+  .msg .context-arrow { transition: transform 0.2s; display: inline-block; }
+  .msg .context-box.expanded .context-arrow { transform: rotate(90deg); }
+  .msg .context-content {
+    padding: 0 12px 8px; display: none; white-space: pre-wrap;
+    border-top: 1px solid rgba(210,153,34,0.15); padding-top: 6px;
+  }
+  .msg .context-box.expanded .context-content { display: block; }
+  /* 消息操作栏 —— 豆包风格 */
+  .msg-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 6px; opacity: 0; transition: opacity 0.15s;
+  }
+  .msg:hover .msg-footer { opacity: 1; }
+  .msg-actions {
+    display: flex; gap: 2px; align-items: center;
+  }
+  .msg-actions button {
+    background: transparent; border: none; color: #8b949e;
+    padding: 4px 6px; border-radius: 6px; cursor: pointer;
+    font-size: 15px; line-height: 1; display: flex; align-items: center;
+    transition: all 0.15s;
+  }
+  .msg-actions button:hover { background: #21262d; color: #c9d1d9; }
+  .msg-actions button.active { color: #58a6ff; }
+  .msg-actions button.copied { color: #3fb950; }
+  .msg-time {
+    font-size: 11px; color: #6e7681; padding-left: 6px;
+  }
+  /* 更多按钮 */
+  .more-btn {
+    background: transparent; border: none; color: #8b949e;
+    padding: 4px 6px; border-radius: 6px; cursor: pointer;
+    font-size: 16px; line-height: 1; transition: all 0.15s;
+  }
+  .more-btn:hover { background: #21262d; color: #c9d1d9; }
+  /* 弹出菜单 —— 豆包风格 */
+  .context-menu {
+    position: fixed; z-index: 1000;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 12px; padding: 6px;
+    min-width: 180px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    display: none;
+  }
+  .context-menu.show { display: block; }
+  .context-menu .menu-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 14px; border-radius: 8px;
+    cursor: pointer; font-size: 14px; color: #c9d1d9;
+    transition: background 0.1s;
+  }
+  .context-menu .menu-item:hover { background: #21262d; }
+  .context-menu .menu-item .icon { font-size: 17px; width: 22px; text-align: center; }
+  .context-menu .menu-item.danger { color: #f85149; }
+  .context-menu .menu-item.danger:hover { background: rgba(248,81,73,0.12); }
+  /* 工具Calls状态 */
+  .tool-status {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 8px 12px; margin: 6px 0; font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .tool-status .spinner {
+    width: 12px; height: 12px; border: 2px solid #30363d;
+    border-top-color: #58a6ff; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tool-status .tool-name { color: #58a6ff; font-weight: bold; }
+  .tool-status.done { opacity: 0.7; }
+  .tool-status.done .spinner { display: none; }
+  .tool-status.done::before { content: "✓"; color: #3fb950; }
+
+  /* Input区 */
+  .chat-input {
+    padding: 12px; border-top: 1px solid #30363d;
+  }
+  .input-controls {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .secretary-toggle {
+    display: flex; align-items: center; gap: 4px; font-size: 12px; color: #8b949e;
+  }
+  .secretary-toggle select {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 3px 8px; border-radius: 4px; font-size: 12px;
+  }
+  .input-row { display: flex; gap: 8px; }
+  .chat-input textarea {
+    flex: 1; background: #0d1117; border: 1px solid #30363d;
+    color: #c9d1d9; padding: 10px; border-radius: 8px; resize: none;
+    font-size: 14px; font-family: inherit; height: 50px;
+  }
+  .chat-input textarea:focus { outline: none; border-color: #58a6ff; }
+  .chat-input button {
+    background: #1f6feb; color: #fff; border: none; padding: 0 20px;
+    border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  .chat-input button:disabled { background: #30363d; cursor: not-allowed; }
+  .chat-input button.stop-btn { background: #da3633; }
+
+  /* 右侧面板 */
+  .side-panel { flex: 1; display: flex; flex-direction: column; min-width: 300px; }
+  .tabs {
+    display: flex; background: #161b22; border-bottom: 1px solid #30363d;
+  }
+  .tab {
+    padding: 10px 18px; cursor: pointer; font-size: 13px;
+    color: #8b949e; border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+  .tab-content { flex: 1; overflow-y: auto; padding: 14px; display: none; }
+  .tab-content.active { display: block; }
+
+  /* 日志 */
+  .log-line {
+    font-family: "Cascadia Code", "Consolas", monospace; font-size: 12px;
+    padding: 3px 6px; border-radius: 4px; margin-bottom: 2px;
+  }
+  .log-line .time { color: #6e7681; }
+  .log-line .role-secretary { color: #d29922; }
+  .log-line .role-nexus { color: #58a6ff; }
+  .log-line .role-linux { color: #3fb950; }
+  .log-line .role-system { color: #8b949e; }
+
+  /* 成本 */
+  .cost-card {
+    background: #21262d; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .cost-card .big { font-size: 28px; color: #3fb950; font-weight: bold; }
+  .cost-card .label { font-size: 12px; color: #8b949e; }
+  .cost-row {
+    display: flex; justify-content: space-between; padding: 6px 0;
+    font-size: 13px; border-bottom: 1px solid #21262d;
+  }
+
+  /* Linux Terminal */
+  .terminal {
+    background: #000; border-radius: 8px; padding: 12px;
+    font-family: "Cascadia Code", "Consolas", monospace; font-size: 13px;
+    height: 300px; overflow-y: auto; margin-bottom: 10px;
+  }
+  .terminal .prompt { color: #3fb950; }
+  .terminal .out { color: #c9d1d9; white-space: pre-wrap; }
+  .terminal .err { color: #f85149; }
+  .term-input { display: flex; gap: 8px; }
+  .term-input input {
+    flex: 1; background: #0d1117; border: 1px solid #30363d;
+    color: #c9d1d9; padding: 8px 12px; border-radius: 6px;
+    font-family: monospace; font-size: 13px;
+  }
+  .term-input button {
+    background: #3fb950; color: #000; border: none; padding: 0 16px;
+    border-radius: 6px; cursor: pointer; font-weight: bold;
+  }
+
+  /* 四库 */
+  .lib-section { margin-bottom: 12px; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  .lib-header {
+    background: #161b22; padding: 10px 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    user-select: none;
+  }
+  .lib-header:hover { background: #1c2128; }
+  .lib-header h3 { font-size: 14px; color: #d29922; }
+  .lib-header .count { font-size: 12px; color: #8b949e; background: #21262d; padding: 2px 8px; border-radius: 10px; }
+  .lib-header .arrow { color: #8b949e; transition: transform 0.2s; font-size: 12px; }
+  .lib-section.collapsed .lib-header .arrow { transform: rotate(-90deg); }
+  .lib-body { padding: 10px 14px; display: block; }
+  .lib-section.collapsed .lib-body { display: none; }
+  .lib-item {
+    background: #0d1117; border-radius: 6px; padding: 8px 12px;
+    margin-bottom: 6px; font-size: 13px; line-height: 1.5;
+    position: relative;
+  }
+  .lib-item .id { color: #58a6ff; font-weight: bold; margin-right: 6px; }
+  .lib-item .time { color: #6e7681; font-size: 11px; float: right; }
+  .lib-item .del-btn {
+    position: absolute; top: 6px; right: 8px;
+    background: transparent; border: none; color: #6e7681;
+    cursor: pointer; font-size: 14px; display: none;
+  }
+  .lib-item:hover .del-btn { display: block; }
+  .lib-item .del-btn:hover { color: #f85149; }
+
+  .seed-btn {
+    background: #d29922; color: #000; border: none; padding: 6px 14px;
+    border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .lib-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .lib-actions button {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .lib-actions button:hover { background: #30363d; }
+  .add-knowledge-form {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 12px; margin-bottom: 12px;
+  }
+  .add-knowledge-form textarea {
+    width: 100%; background: #0d1117; border: 1px solid #30363d;
+    color: #c9d1d9; padding: 8px; border-radius: 6px; font-size: 13px;
+    resize: vertical; min-height: 60px; margin-bottom: 8px;
+  }
+  .add-knowledge-form select {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;
+  }
+  .loading { color: #8b949e; font-style: italic; }
+  .fast-path-badge {
+    display: inline-block; background: #238636; color: #fff;
+    padding: 1px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;
+  }
+  body.resizing { user-select: none; cursor: col-resize; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Nexus Dual-Core Agent</h1>
+  <span class="status"><span class="dot"></span><span id="sys-status">Initializing...</span></span>
+</div>
+
+<div class="main">
+  <div class="chat-panel" id="chat-panel">
+    <div class="chat-messages" id="chat-messages">
+      <div id="history-loader" style="text-align:center; padding:8px; color:#8b949e; font-size:12px; display:none;">Loading older messages...</div>
+      <div class="msg nexus">
+        <div class="bubble">I'm Nexus, a dual-core coding agent. Tell me what to build or fix.</div>
+        <div class="meta">Nexus · System</div>
+        <div class="msg-actions">
+          <button onclick="handleAction('copy', this)" title="Copy"><span class="icon">📋</span>Copy</button>
+          <button class="more-btn" onclick="showContextMenu(event, 'nexus')" title="More">⋯</button>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input">
+      <div class="input-controls">
+        <div class="secretary-toggle">
+          Mode:
+          <select id="agent-mode" onchange="switchAgentMode(this.value)">
+            <option value="work">Work (coding, full tools)</option>
+            <option value="chat">Chat (light, cheap)</option>
+          </select>
+        </div>
+        <div class="secretary-toggle">
+          Secretary:
+          <select id="secretary-mode">
+            <option value="auto">Auto (skip simple)</option>
+            <option value="on">Always on</option>
+            <option value="off">Always off (fastest)</option>
+          </select>
+        </div>
+      </div>
+      <div class="input-row">
+        <textarea id="user-input" placeholder="Enter task... (Enter to send, Shift+Enter for newline)"></textarea>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="resizer" id="resizer"></div>
+
+  <div class="side-panel">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('logs')">Activity Log</div>
+      <div class="tab" onclick="switchTab('cost')">Cost Monitor</div>
+      <div class="tab" onclick="switchTab('linux')">Linux Terminal</div>
+      <div class="tab" onclick="switchTab('libs')">Libraries</div>
+      <div class="tab" onclick="switchTab('stats')">Stats</div>
+    </div>
+
+    <div class="tab-content active" id="tab-logs">
+      <div id="log-list"></div>
+    </div>
+
+    <div class="tab-content" id="tab-cost">
+      <div class="cost-card">
+        <div class="label">Today's Total Cost</div>
+        <div class="big" id="cost-today">¥0.00</div>
+        <div class="label" id="cost-detail">Loading...</div>
+      </div>
+      <div id="cost-history"></div>
+    </div>
+
+    <div class="tab-content" id="tab-linux">
+      <div class="cost-card" style="margin-bottom:10px;">
+        <div class="label">Embedded Linux Environment</div>
+        <div id="linux-info" style="font-size:13px; margin-top:6px;">Detecting...</div>
+      </div>
+      <div class="terminal" id="terminal">
+        <div><span class="prompt" id="term-prompt">nexus@ubuntu:~$</span> <span class="out">Welcome to embedded Linux terminal (WSL2 Ubuntu). Use cd to navigate.</span></div>
+      </div>
+      <div class="term-input">
+        <input id="linux-cmd" placeholder="Enter command, e.g.: ls /  cd /home  mkdir test" onkeydown="if(event.key==='Enter')execLinux()">
+        <button onclick="execLinux()">Execute</button>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-libs">
+      <div class="lib-actions">
+        <button class="seed-btn" onclick="seedData()" style="margin-bottom:0;">Seed Demo</button>
+        <button id="toggle-all-libs" onclick="toggleAllLibs()">Expand All</button>
+        <button onclick="compactExperience()" title="Auto at 30 items, or manual">Compact Exp</button>
+        <button onclick="cleanMemory()" title="Remove task logs from memory">Clean Memory</button>
+      </div>
+      <div class="add-knowledge-form">
+        <textarea id="new-knowledge" placeholder="Enter knowledge/experience to add..."></textarea>
+        <select id="new-knowledge-lib">
+          <option value="knowledge">Knowledge</option>
+          <option value="experience">Experience</option>
+          <option value="memory">Memory</option>
+          <option value="tools">Tools</option>
+        </select>
+        <button class="seed-btn" onclick="addKnowledge()">Add</button>
+      </div>
+      <div id="libs-content"></div>
+    </div>
+
+    <div class="tab-content" id="tab-stats">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+        <div class="cost-card">
+          <div class="label">Total Tasks</div>
+          <div class="big" id="stat-total">0</div>
+        </div>
+        <div class="cost-card">
+          <div class="label">Success Rate</div>
+          <div class="big" id="stat-rate">0%</div>
+          <div class="label" id="stat-recent-rate">Recent 10: 0%</div>
+        </div>
+        <div class="cost-card">
+          <div class="label">Avg Tools / Task</div>
+          <div class="big" id="stat-tools">0</div>
+        </div>
+        <div class="cost-card">
+          <div class="label">Avg Duration</div>
+          <div class="big" id="stat-duration">0s</div>
+          <div class="label" id="stat-tokens">Avg tokens: 0</div>
+        </div>
+      </div>
+      <div class="label" style="margin-bottom:6px;">Recent Tasks</div>
+      <div id="stat-recent" style="font-size:12px; max-height:400px; overflow-y:auto;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 页面初始化: 加载历史消息 + 设置滚动监听
+document.addEventListener('DOMContentLoaded', () => {
+  loadInitialHistory();
+  setupHistoryScroll();
+});
+
+// 全局错误捕获
+window.onerror = function(msg, url, line, col, error) {
+  console.error('JS Error:', msg, 'Line:', line, 'Col:', col);
+  const box = document.getElementById('chat-messages');
+  if (box) {
+    const div = document.createElement('div');
+    div.className = 'msg nexus';
+    div.innerHTML = `<div class="bubble" style="color:#f85149;border-color:#f85149;">⚠️ Frontend error: ${msg}<br>Line ${line}:${col}<br>Please screenshot and report</div>`;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+  }
+  // 重置Send按钮状态
+  isGenerating = false;
+  const btn = document.getElementById('send-btn');
+  if (btn) { btn.textContent = 'Send'; btn.className = ''; btn.onclick = sendMessage; }
+  return false;
+};
+
+let currentTab = 'logs';
+let currentCwd = '~';
+let isGenerating = false;
+let currentController = null;
+
+// ============ 可拖拽分隔条 ============
+const resizer = document.getElementById('resizer');
+const chatPanel = document.getElementById('chat-panel');
+let isResizing = false;
+resizer.addEventListener('mousedown', (e) => {
+  isResizing = true; resizer.classList.add('active');
+  document.body.classList.add('resizing'); e.preventDefault();
+});
+document.addEventListener('mousemove', (e) => {
+  if (!isResizing) return;
+  const cr = document.querySelector('.main').getBoundingClientRect();
+  const nw = e.clientX - cr.left;
+  if (nw >= 280 && nw <= cr.width - 300) chatPanel.style.width = nw + 'px';
+});
+document.addEventListener('mouseup', () => {
+  if (isResizing) { isResizing = false; resizer.classList.remove('active'); document.body.classList.remove('resizing'); }
+});
+
+// ============ Tab 切换 ============
+function switchTab(name) {
+  currentTab = name;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'cost') loadCost();
+  if (name === 'linux') loadLinuxInfo();
+  if (name === 'libs') loadLibraries();
+  if (name === 'stats') loadTaskStats();
+}
+
+// ============ 历史消息滚动加载 ============
+let historyOffset = 0;
+let historyHasMore = true;
+let historyLoading = false;
+const HISTORY_PAGE_SIZE = 12; // 每次加载6轮(12条)
+
+async function loadInitialHistory() {
+  // 页面加载时拉取最近的消息
+  historyOffset = 0;
+  historyHasMore = true;
+  await loadMoreHistory(true);
+}
+
+async function loadMoreHistory(isInitial = false) {
+  if (historyLoading || !historyHasMore) return;
+  historyLoading = true;
+  const loader = document.getElementById('history-loader');
+  if (loader) loader.style.display = 'block';
+
+  try {
+    const resp = await fetch(`/api/history?offset=${historyOffset}&limit=${HISTORY_PAGE_SIZE}`);
+    const data = await resp.json();
+    const box = document.getElementById('chat-messages');
+    const loaderEl = document.getElementById('history-loader');
+
+    if (data.messages && data.messages.length > 0) {
+      // 保存当前滚动位置
+      const prevHeight = box.scrollHeight;
+      // 按顺序插入到 loader 后面, 欢迎消息前面
+      const fragment = document.createDocumentFragment();
+      data.messages.forEach(msg => {
+        const div = document.createElement('div');
+        const isUser = msg.role === 'user';
+        div.className = 'msg ' + (isUser ? 'user' : 'nexus');
+        const content = isUser ? escapeHtml(msg.content) : renderMarkdown(msg.content);
+        div.innerHTML = `<div class="bubble">${content}</div>` +
+          buildActions(isUser ? 'user' : 'nexus', div);
+        fragment.appendChild(div);
+      });
+      // 插入到 loader 之后, 第一条消息之前
+      const firstMsg = box.querySelector('.msg');
+      if (firstMsg) {
+        box.insertBefore(fragment, firstMsg);
+      } else {
+        box.appendChild(fragment);
+      }
+      historyOffset += data.messages.length;
+      historyHasMore = data.has_more;
+      // 恢复滚动位置 (如果不是首次加载)
+      if (!isInitial) {
+        box.scrollTop = box.scrollHeight - prevHeight;
+      } else {
+        box.scrollTop = box.scrollHeight;
+      }
+    } else {
+      historyHasMore = false;
+    }
+  } catch (e) {
+    // 加载失败静默处理, 不报错
+    historyHasMore = false;
+  } finally {
+    historyLoading = false;
+    const loader = document.getElementById('history-loader');
+    if (loader) loader.style.display = 'none';
+  }
+}
+
+// 滚动到顶部时加载更多
+function setupHistoryScroll() {
+  const box = document.getElementById('chat-messages');
+  box.addEventListener('scroll', () => {
+    if (box.scrollTop < 50 && !historyLoading && historyHasMore) {
+      loadMoreHistory();
+    }
+  });
+}
+
+async function loadTaskStats() {
+  try {
+    const resp = await fetch('/api/task-stats');
+    const data = await resp.json();
+    document.getElementById('stat-total').textContent = data.total;
+    document.getElementById('stat-rate').textContent = data.success_rate + '%';
+    document.getElementById('stat-recent-rate').textContent = 'Recent 10: ' + data.recent_success_rate + '%';
+    document.getElementById('stat-tools').textContent = data.avg_tools;
+    document.getElementById('stat-duration').textContent = data.avg_duration + 's';
+    document.getElementById('stat-tokens').textContent = 'Avg tokens: ' + data.avg_tokens;
+    const recentEl = document.getElementById('stat-recent');
+    if (data.recent && data.recent.length > 0) {
+      recentEl.innerHTML = data.recent.map(t =>
+        '<div style="padding:4px 8px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between;">' +
+        '<span style="color:' + (t.success ? '#3fb950' : '#f85149') + ';">' +
+        (t.success ? '✓' : '✗') + ' ' + escapeHtml(t.task) + '</span>' +
+        '<span style="color:#8b949e;">' + t.tools + ' tools · ' + t.duration + 's · ' + t.time.slice(5,16) + '</span>' +
+        '</div>'
+      ).join('');
+    } else {
+      recentEl.innerHTML = '<div style="color:#8b949e; padding:8px;">No tasks yet.</div>';
+    }
+  } catch (e) {
+    document.getElementById('stat-recent').innerHTML = '<div style="color:#f85149;">Failed to load stats</div>';
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+}
+
+// Markdown 渲染 (Nexus 消息用)
+// 配置 marked + highlight.js
+if (window.hljs) {
+  marked.setOptions({
+    breaks: true,
+    gfm: true,
+    highlight: function(code, lang) {
+      try {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      } catch (e) {
+        return code;
+      }
+    }
+  });
+} else {
+  marked.setOptions({ breaks: true, gfm: true });
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    return marked.parse(text);
+  } catch (e) {
+    return escapeHtml(text);
+  }
+}
+
+// 从渲染后的气泡中提取纯文本 (用于复制)
+function getBubbleText(bubbleEl) {
+  return bubbleEl.innerText || bubbleEl.textContent || '';
+}
+
+// ============ 消息操作按钮 (豆包风格, 图标式) ============
+const NEXUS_ACTIONS = [
+  { icon: '📋', label: 'Copy', action: 'copy' },
+  { icon: '🔊', label: 'Read Aloud', action: 'voice' },
+  { icon: '👍', label: 'Like', action: 'like' },
+  { icon: '👎', label: 'Dislike', action: 'dislike' },
+  { icon: '↗️', label: 'Share', action: 'share' },
+];
+const USER_ACTIONS = [
+  { icon: '📋', label: 'Copy', action: 'copy' },
+];
+
+// 弹出菜单项 (按角色区分)
+const MENU_ITEMS_USER = [
+  { icon: '✏️', label: 'Edit & Resend', action: 'edit_resend' },
+  { icon: '📝', label: 'Save as Document', action: 'save_doc' },
+  { icon: '🗑️', label: 'Delete', action: 'delete', danger: true },
+];
+const MENU_ITEMS_NEXUS = [
+  { icon: '📝', label: 'Save as Document', action: 'save_doc' },
+  { icon: '⚠️', label: 'Feedback & Report', action: 'feedback' },
+  { icon: '🗑️', label: 'Delete', action: 'delete', danger: true },
+];
+
+// 语音朗读状态
+let currentSpeech = null;
+
+function buildActions(role, msgDiv) {
+  const actions = role === 'nexus' ? NEXUS_ACTIONS : USER_ACTIONS;
+  const time = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+  const buttons = actions.map(a =>
+    `<button onclick="handleAction('${a.action}', this)" title="${a.label}">${a.icon}</button>`
+  ).join('');
+  const moreBtn = `<button class="more-btn" onclick="showContextMenu(event, '${role}')" title="More">⋯</button>`;
+  return `<div class="msg-footer">
+    <div class="msg-actions">${buttons}${moreBtn}</div>
+    <span class="msg-time">Today ${time}</span>
+  </div>`;
+}
+
+// ============ 弹出菜单 ============
+let currentMenuMsgDiv = null;
+
+function showContextMenu(event, role) {
+  event.stopPropagation();
+  const menu = document.getElementById('context-menu');
+  currentMenuMsgDiv = event.target.closest('.msg');
+  const menuItems = role === 'user' ? MENU_ITEMS_USER : MENU_ITEMS_NEXUS;
+
+  menu.innerHTML = menuItems.map(item =>
+    `<div class="menu-item ${item.danger ? 'danger' : ''}" onclick="handleMenuAction('${item.action}')">
+      <span class="icon">${item.icon}</span>${item.label}
+    </div>`
+  ).join('');
+
+  menu.classList.add('show');
+  const rect = event.target.getBoundingClientRect();
+  let x = rect.right - 180;
+  let y = rect.bottom + 4;
+  if (x < 8) x = 8;
+  if (y + 160 > window.innerHeight) y = rect.top - 160;
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+}
+
+function hideContextMenu() {
+  document.getElementById('context-menu').classList.remove('show');
+  currentMenuMsgDiv = null;
+}
+
+function handleMenuAction(action) {
+  if (!currentMenuMsgDiv) return;
+  const bubble = currentMenuMsgDiv.querySelector('.bubble');
+  const text = getBubbleText(bubble);
+
+  if (action === 'save_doc') {
+    const blob = new Blob([text], {type: 'text/markdown;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nexus_${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    hideContextMenu();
+  } else if (action === 'feedback') {
+    alert('Feedback feature in development. Thanks for your support!');
+    hideContextMenu();
+  } else if (action === 'edit_resend') {
+    // 编辑重发: 把消息填回输入框, 不删除任何消息(保留对话历史)
+    const input = document.getElementById('user-input');
+    input.value = text;
+    hideContextMenu();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  } else if (action === 'delete') {
+    if (confirm('Delete this message?')) {
+      // Stop语音
+      if (currentSpeech) { window.speechSynthesis.cancel(); currentSpeech = null; }
+      currentMenuMsgDiv.remove();
+      hideContextMenu();
+    }
+  }
+}
+
+// 点击其他地方关闭菜单
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.context-menu') && !e.target.closest('.more-btn')) {
+    hideContextMenu();
+  }
+});
+
+function handleAction(action, btn) {
+  const msgDiv = btn.closest('.msg');
+  const bubble = msgDiv.querySelector('.bubble');
+  const text = getBubbleText(bubble);
+
+  if (action === 'copy') {
+    navigator.clipboard.writeText(text).then(() => {
+      btn.classList.add('copied');
+      const orig = btn.innerHTML;
+      btn.textContent = '✓';
+      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = orig; }, 1500);
+    });
+  } else if (action === 'voice') {
+    // 语音朗读 (Web Speech API)
+    if (currentSpeech) {
+      window.speechSynthesis.cancel();
+      currentSpeech = null;
+      btn.classList.remove('active');
+      return;
+    }
+    if (!('speechSynthesis' in window)) {
+      alert('Browser does not support speech synthesis');
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'zh-CN';
+    utter.rate = 1.0;
+    utter.onend = () => { currentSpeech = null; btn.classList.remove('active'); };
+    utter.onerror = () => { currentSpeech = null; btn.classList.remove('active'); };
+    currentSpeech = utter;
+    btn.classList.add('active');
+    window.speechSynthesis.speak(utter);
+  } else if (action === 'like') {
+    btn.classList.toggle('active');
+    // un-dislike
+    const dislikeBtn = msgDiv.querySelector('[title="Dislike"]');
+    if (dislikeBtn) dislikeBtn.classList.remove('active');
+  } else if (action === 'dislike') {
+    btn.classList.toggle('active');
+    const likeBtn = msgDiv.querySelector('[title="Like"]');
+    if (likeBtn) likeBtn.classList.remove('active');
+  } else if (action === 'share') {
+    if (navigator.share) {
+      navigator.share({title: 'Nexus Message', text: text}).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = '✓';
+        setTimeout(() => { btn.textContent = '↗️'; }, 1500);
+      });
+    }
+  } else if (action === 'edit') {
+    document.getElementById('user-input').value = text;
+    document.getElementById('user-input').focus();
+  } else if (action === 'regenerate') {
+    const prevUser = msgDiv.previousElementSibling;
+    if (prevUser && prevUser.classList.contains('user')) {
+      const userText = getBubbleText(prevUser.querySelector('.bubble'));
+      document.getElementById('user-input').value = userText;
+      sendMessage();
+    }
+  }
+}
+
+function addMessage(role, text, meta='', msgId='') {
+  const box = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (msgId) div.id = msgId;
+  const content = role === 'nexus' ? renderMarkdown(text) : escapeHtml(text);
+  div.innerHTML = `<div class="bubble">${content}</div>` +
+    (meta ? `<div class="meta">${meta}</div>` : '') +
+    buildActions(role, div);
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+function addToolStatus(toolName, parentDiv) {
+  const div = document.createElement('div');
+  div.className = 'tool-status';
+  div.innerHTML = `<div class="spinner"></div><span>Calling <span class="tool-name">${toolName}</span>...</span>`;
+  parentDiv.appendChild(div);
+  document.getElementById('chat-messages').scrollTop = 999999;
+  return div;
+}
+
+// ============ Send消息 (流式) ============
+let currentAbortController = null;
+
+async function switchAgentMode(mode) {
+      try {
+        await fetch('/api/mode', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: mode}),
+        });
+      } catch (e) { console.warn('mode switch failed', e); }
+    }
+
+    // 页面加载时同步后端当前模式
+    (async function initAgentMode() {
+      try {
+        const r = await fetch('/api/mode');
+        const d = await r.json();
+        const sel = document.getElementById('agent-mode');
+        if (sel && d.mode) sel.value = d.mode;
+      } catch (e) {}
+    })();
+
+    async function sendMessage() {
+  const input = document.getElementById('user-input');
+  const btn = document.getElementById('send-btn');
+  const msg = input.value.trim();
+  if (!msg || isGenerating) return;
+
+  try {
+    input.value = '';
+    isGenerating = true;
+    btn.textContent = 'Stop';
+    btn.className = 'stop-btn';
+    btn.onclick = stopGeneration;
+
+    addMessage('user', msg);
+
+    const secMode = document.getElementById('secretary-mode').value;
+    const agentMode = document.getElementById('agent-mode').value;
+    const respDiv = document.createElement('div');
+    respDiv.className = 'msg nexus';
+    respDiv.innerHTML = '<div class="bubble loading">Nexus thinking...</div>';
+    document.getElementById('chat-messages').appendChild(respDiv);
+    const bubble = respDiv.querySelector('.bubble');
+    document.getElementById('chat-messages').scrollTop = 999999;
+
+    currentAbortController = new AbortController();
+    let fullText = '';
+    let contextHtml = '';
+    let fastPath = false;
+    let timing = {total_s: 0, decision_s: 0};
+    let tokens = {input: 0, output: 0, total: 0};
+
+  try {
+    const resp = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, use_secretary: secMode, mode: agentMode}),
+      signal: currentAbortController.signal,
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const event = JSON.parse(line.slice(6));
+
+        if (event.type === 'status') {
+          bubble.textContent = event.message;
+        } else if (event.type === 'secretary_done') {
+          if (event.context && !event.context.includes('No relevant') && !event.context.includes('Fast Path')) {
+            contextHtml = `<div class="context-box" onclick="this.classList.toggle('expanded')">
+              <div class="context-header"><span class="context-arrow">▶</span> Secretary context (click to expand)</div>
+              <div class="context-content">${escapeHtml(event.context)}</div>
+            </div>`;
+          }
+          bubble.textContent = 'Nexus thinking...';
+        } else if (event.type === 'token') {
+          if (bubble.classList.contains('loading')) {
+            bubble.classList.remove('loading');
+            bubble.textContent = '';
+          }
+          fullText += event.content;
+          bubble.textContent = fullText;
+          document.getElementById('chat-messages').scrollTop = 999999;
+        } else if (event.type === 'tool_start') {
+          const toolDiv = document.createElement('div');
+          toolDiv.className = 'tool-status';
+          toolDiv.innerHTML = `<div class="spinner"></div><span>Calling <span class="tool-name">${event.name}</span>...</span>`;
+          respDiv.insertBefore(toolDiv, bubble);
+        } else if (event.type === 'tool_end') {
+          const lastTool = respDiv.querySelector('.tool-status:not(.done)');
+          if (lastTool) {
+            lastTool.classList.add('done');
+            lastTool.querySelector('span').innerHTML = `Tool <span class="tool-name">${event.name}</span> done`;
+          }
+        } else if (event.type === 'complete') {
+          fastPath = event.record.fast_path;
+          timing = event.record.timing;
+          tokens = event.record.tokens || {input: 0, output: 0, total: 0};
+        } else if (event.type === 'error') {
+          bubble.textContent = 'Error: ' + event.message;
+          bubble.classList.remove('loading');
+        }
+      }
+    }
+
+    // 完成后渲染最终结果 (Markdown)
+    const fastBadge = fastPath ? '<span class="fast-path-badge">Fast Path</span>' : '';
+    bubble.classList.remove('loading');
+    respDiv.innerHTML = contextHtml +
+      `<div class="bubble">${renderMarkdown(fullText)}</div>` +
+      `<div class="meta">Nexus · ${fastBadge} Time ${timing.total_s}s · Decision ${timing.decision_s}s · Tokens ${tokens.total} (in ${tokens.input} / out ${tokens.output})</div>` +
+      buildActions('nexus', respDiv);
+    loadLogs(); loadCost();
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      bubble.textContent = fullText + '\n\n(Stopped)';
+    } else {
+      bubble.textContent = 'Request failed: ' + e.message;
+    }
+    bubble.classList.remove('loading');
+    // 错误情况也加操作按钮
+    if (!respDiv.querySelector('.msg-footer')) {
+      respDiv.insertAdjacentHTML('beforeend', buildActions('nexus', respDiv));
+    }
+  }
+  isGenerating = false;
+  currentAbortController = null;
+  btn.textContent = 'Send';
+  btn.className = '';
+  btn.onclick = sendMessage;
+  document.getElementById('chat-messages').scrollTop = 999999;
+  } catch (outerErr) {
+    console.error('sendMessage error:', outerErr);
+    isGenerating = false;
+    currentAbortController = null;
+    btn.textContent = 'Send';
+    btn.className = '';
+    btn.onclick = sendMessage;
+    const box = document.getElementById('chat-messages');
+    const errDiv = document.createElement('div');
+    errDiv.className = 'msg nexus';
+    errDiv.innerHTML = `<div class="bubble" style="color:#f85149;border-color:#f85149;">⚠️ Error: ${outerErr.message}</div>`;
+    box.appendChild(errDiv);
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+function stopGeneration() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+  isGenerating = false;
+  const btn = document.getElementById('send-btn');
+  btn.textContent = 'Send'; btn.className = ''; btn.onclick = sendMessage;
+}
+
+// ============ 日志/成本/Linux/四库 ============
+async function loadLogs() {
+  try {
+    const resp = await fetch('/api/logs');
+    const logs = await resp.json();
+    document.getElementById('log-list').innerHTML = logs.slice().reverse().map(l => {
+      const rc = 'role-' + (l.role || 'system');
+      return `<div class="log-line"><span class="time">[${l.time}]</span> ` +
+        `<span class="${rc}">[${l.role}]</span> ${escapeHtml(l.action)} ` +
+        `<span style="color:#6e7681">${escapeHtml(l.detail || '')}</span></div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+async function loadCost() {
+  try {
+    const resp = await fetch('/api/cost');
+    const data = await resp.json();
+    document.getElementById('cost-today').textContent = '¥' + data.today.total_cost_yuan;
+    document.getElementById('cost-detail').textContent =
+      `Calls ${data.today.calls}  calls · Input ${data.today.input_tokens} tokens · Output ${data.today.output_tokens} tokens`;
+    document.getElementById('cost-history').innerHTML =
+      data.history.slice().reverse().map(h =>
+        `<div class="cost-row"><span>${h.time} · ${h.model}</span>` +
+        `<span>¥${h.cost_yuan} (${h.input_tokens}+${h.output_tokens})</span></div>`
+      ).join('');
+  } catch (e) {}
+}
+
+async function loadLinuxInfo() {
+  try {
+    const resp = await fetch('/api/linux/info');
+    const info = await resp.json();
+    let html = `<div>Mode: <b>${info.mode || 'Unknown'}</b></div>`;
+    if (info.details) html += `<pre style="font-size:12px;color:#8b949e;margin-top:6px;white-space:pre-wrap;">${escapeHtml(info.details)}</pre>`;
+    document.getElementById('linux-info').innerHTML = html;
+    if (info.cwd) { currentCwd = info.cwd; updateTermPrompt(); }
+  } catch (e) {}
+}
+
+function updateTermPrompt() {
+  document.getElementById('term-prompt').textContent = `nexus@ubuntu:${currentCwd}$`;
+}
+
+async function execLinux() {
+  const input = document.getElementById('linux-cmd');
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  input.value = '';
+  const term = document.getElementById('terminal');
+  term.innerHTML += `<div><span class="prompt">nexus@ubuntu:${currentCwd}$</span> ${escapeHtml(cmd)}</div>`;
+  try {
+    const resp = await fetch('/api/linux', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({command: cmd}),
+    });
+    const data = await resp.json();
+    const cwdMatch = (data.stdout || '').match(/\[目录:\s*([^\]]+)\]/);
+    if (cwdMatch) { currentCwd = cwdMatch[1]; updateTermPrompt(); }
+    let cleanOut = (data.stdout || '').replace(/\[目录:[^\]]*\]\s*/g, '').replace(/\[档位:[^\]]*\]\s*/g, '');
+    if (cleanOut.trim()) term.innerHTML += `<div class="out">${escapeHtml(cleanOut)}</div>`;
+    if (data.stderr) term.innerHTML += `<div class="err">${escapeHtml(data.stderr)}</div>`;
+    if (data.error) term.innerHTML += `<div class="err">Error: ${escapeHtml(data.error)}</div>`;
+  } catch (e) {
+    term.innerHTML += `<div class="err">Request failed: ${e.message}</div>`;
+  }
+  term.scrollTop = term.scrollHeight;
+}
+
+// ============ Libraries ============
+const libSections = [
+  { key: 'tools', name: 'Tools', color: '#58a6ff' },
+  { key: 'knowledge', name: 'Knowledge', color: '#d29922' },
+  { key: 'experience', name: 'Experience', color: '#3fb950' },
+  { key: 'memory', name: 'Memory', color: '#bc8cff' },
+];
+
+async function loadLibraries() {
+  try {
+    const resp = await fetch('/api/libraries');
+    const data = await resp.json();
+    document.getElementById('libs-content').innerHTML = libSections.map(sec => {
+      const items = data[sec.key] || [];
+      return `<div class="lib-section" id="lib-${sec.key}">
+        <div class="lib-header" onclick="toggleLib('${sec.key}')">
+          <h3 style="color:${sec.color};">${sec.name}</h3>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="count">${items.length} items</span><span class="arrow">▼</span>
+          </div>
+        </div>
+        <div class="lib-body">
+          ${items.length === 0 ? '<div style="color:#6e7681;font-size:13px;padding:8px;">No content</div>' :
+            items.map(i => `<div class="lib-item">
+              <button class="del-btn" onclick="deleteLibItem('${sec.key}', ${i.id})" title="Delete">×</button>
+              <span class="id">#${i.id}</span><span class="time">${i.time}</span>${escapeHtml(i.content)}
+            </div>`).join('')
+          }
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+function toggleLib(key) { document.getElementById('lib-' + key).classList.toggle('collapsed'); }
+let libsExpanded = true;
+function toggleAllLibs() {
+  libsExpanded = !libsExpanded;
+  document.querySelectorAll('.lib-section').forEach(el => {
+    if (libsExpanded) el.classList.remove('collapsed');
+    else el.classList.add('collapsed');
+  });
+  document.getElementById('toggle-all-libs').textContent = libsExpanded ? 'Collapse All' : 'Expand All';
+}
+
+async function addKnowledge() {
+  const content = document.getElementById('new-knowledge').value.trim();
+  const lib = document.getElementById('new-knowledge-lib').value;
+  if (!content) return;
+  try {
+    await fetch('/api/libraries/add', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({library: lib, content: content}),
+    });
+    document.getElementById('new-knowledge').value = '';
+    loadLibraries(); loadLogs();
+  } catch (e) { alert('Add failed: ' + e.message); }
+}
+
+async function deleteLibItem(lib, id) {
+  if (!confirm('Delete this item?')) return;
+  try {
+    await fetch(`/api/libraries/delete?library=${lib}&id=${id}`, {method: 'DELETE'});
+    loadLibraries(); loadLogs();
+  } catch (e) { alert('Delete failed: ' + e.message); }
+}
+
+async function seedData() {
+  await fetch('/api/seed', {method: 'POST'});
+  loadLibraries(); loadLogs();
+}
+
+async function compactExperience() {
+  const resp = await fetch('/api/libraries/compact', {method: 'POST'});
+  const result = await resp.json();
+  if (result.ok) {
+    alert(`Experience compacted: ${result.old} → ${result.new} items`);
+  } else {
+    alert(result.reason || result.error || 'Compact failed');
+  }
+  loadLibraries(); loadLogs();
+}
+
+async function cleanMemory() {
+  const resp = await fetch('/api/libraries/clean-memory', {method: 'POST'});
+  const result = await resp.json();
+  alert(`Memory cleaned: ${result.old} → ${result.new} items (Removed ${result.removed} task logs)`);
+  loadLibraries(); loadLogs();
+}
+
+async function loadStats() {
+  try {
+    const resp = await fetch('/api/stats');
+    const s = await resp.json();
+    document.getElementById('sys-status').textContent =
+      `Search: ${s['四库统计']['检索模式']} · Linux: ${s['Linux模式']} · ` +
+      `Tasks: ${s['历史任务数']} · Chat: ${s['对话轮次']} turns`;
+  } catch (e) {}
+}
+
+document.getElementById('user-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+setInterval(() => { if (currentTab === 'logs') loadLogs(); }, 3000);
+loadLogs(); loadStats();
+</script>
+
+<!-- 弹出菜单 -->
+<div class="context-menu" id="context-menu"></div>
+
+</body>
+</html>

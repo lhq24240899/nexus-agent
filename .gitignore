@@ -1,0 +1,42 @@
+# ============ 密钥与环境 ============
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+
+# ============ 项目运行时数据 ============
+data/
+temp/
+logs/
+*.log
+
+# ============ 编辑备份 ============
+*.bak
+*.orig
+*.rej
+
+# ============ IDE / 编辑器 ============
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ============ 系统文件 ============
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============ Node (如后续引入) ============
+node_modules/

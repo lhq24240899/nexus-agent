@@ -1,0 +1,12 @@
+openai>=1.0.0
+flask>=3.0.0
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+pywebview>=5.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+feedparser>=6.0.0
+# 可选: 精确 token 计数与上下文压缩阈值 (缺失时自动降级为字符估算)
+tiktoken>=0.7.0
