@@ -1,0 +1,30 @@
+description: 创建交互式猜数字小游戏并验证运行
+improved_at: ''
+name: interactive_game_dev
+required_tools:
+- code_exec
+- file_write
+- code_exec
+steps:
+- description: 查看目标目录文件，确认命名无覆盖
+  tool: file_list
+- description: 编写猜数字游戏代码，包含随机数、输入校验、次数统计、重玩循环和测试函数
+  tool: file_write
+- description: 执行测试函数验证随机数范围及游戏逻辑
+  tool: code_exec
+- description: 运行游戏主流程确认可交互运行
+  tool: code_exec
+tags:
+- 编程
+- Python
+- 文件操作
+- 测试
+trigger:
+  keywords:
+  - 猜数字
+  - 小游戏
+  - 交互式程序
+  - random.randint
+  - 游戏开发
+  patterns: []
+version: 1

@@ -1,0 +1,33 @@
+description: '系统化调试 Python 错误: 读取代码→复现→定位→修复→验证'
+name: debug_python_error
+required_tools:
+- file_read
+- code_search
+- code_exec
+- code_edit
+steps:
+- description: 读取报错涉及的源文件, 理解上下文
+  tool: file_read
+- description: 搜索报错相关的函数和调用点
+  tool: code_search
+- description: 复现错误, 获取完整 traceback
+  tool: code_exec
+- description: 根据错误信息精确定位并修复
+  tool: code_edit
+- description: 运行验证修复是否成功, 失败则继续分析
+  tool: code_exec
+tags:
+- debug
+- python
+trigger:
+  keywords:
+  - 报错
+  - 错误
+  - error
+  - traceback
+  - 失败
+  - debug
+  - 异常
+  - exception
+  patterns:
+  - (报错|错误|error|exception).{0,20}(python|py|\.py)

@@ -1,0 +1,32 @@
+description: 安全地复制文件并重命名，然后删除原文件，确保数据不丢失。
+name: file_copy_rename_delete
+required_tools:
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- file_read
+- code_exec
+steps:
+- description: 检查源文件是否存在，确认文件信息
+  tool: code_exec
+- description: 复制源文件并重命名为目标文件
+  tool: code_exec
+- description: 读取新文件内容，确认与源文件一致
+  tool: file_read
+- description: 删除原文件
+  tool: code_exec
+- description: 验证原文件已删除且新文件存在
+  tool: code_exec
+tags:
+- 文件管理
+- Python
+- 自动化
+trigger:
+  keywords:
+  - 复制文件
+  - 重命名
+  - 删除文件
+  - 文件操作
+  - 替换文件
+  patterns: []

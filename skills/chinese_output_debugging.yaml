@@ -1,0 +1,45 @@
+description: 在代码执行中处理中文输出无显示问题，通过ASCII安全方式读取和验证文件内容。
+improved_at: ''
+name: chinese_output_debugging
+required_tools:
+- mcp_project_filesystem_list_directory
+- mcp_project_filesystem_search_files
+- mcp_project_filesystem_list_directory
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+steps:
+- description: 列出目标文件夹内容以确认项目结构
+  tool: mcp_project_filesystem_list_directory
+- description: 搜索相关文件以定位待处理文件
+  tool: mcp_project_filesystem_search_files
+- description: 再次列出目录确认文件存在
+  tool: mcp_project_filesystem_list_directory
+- description: 编写并运行冒泡排序代码
+  tool: code_exec
+- description: 尝试打印文件内容，发现无输出
+  tool: code_exec
+- description: 确认文件读取正常，但中文内容导致打印无显示
+  tool: code_exec
+- description: 改用ASCII安全方式读取文件内容，验证排序结果
+  tool: code_exec
+- description: 执行最终验证，确保代码正确
+  tool: code_exec
+tags:
+- 调试
+- 中文编码
+- 代码执行
+- 文件系统
+trigger:
+  keywords:
+  - 冒泡排序
+  - 中文输出
+  - 无输出
+  - ASCII
+  - 文件读取
+  - 调试
+  patterns: []
+version: 1

@@ -1,0 +1,65 @@
+# Nexus 工具注册表 —— 参考 providers.yaml 设计
+- name: web_search
+  label: 联网搜索
+  description: 通过 DuckDuckGo 搜索互联网信息, 输入查询关键词返回搜索结果摘要
+  category: search
+- name: code_exec
+  label: 代码执行
+  description: 在本地执行 Python 代码, 返回标准输出和错误信息
+  category: tool
+- name: linux_terminal
+  label: Linux终端
+  description: 在嵌入的 Linux 系统中执行 shell 命令, 返回命令输出
+  category: system
+- name: current_time
+  label: 当前时间
+  description: 获取当前日期和时间
+  category: tool
+- name: file_read
+  label: 读取文件
+  description: 读取本地文本文件内容, 支持指定最大行数
+  category: file
+- name: file_write
+  label: 写入文件
+  description: 将内容写入本地文件, 文件存在则覆盖
+  category: file
+- name: file_list
+  label: 列出目录
+  description: 列出指定目录下的文件和子目录
+  category: file
+- name: code_search
+  label: 代码搜索
+  description: 在项目中搜索代码内容, 符号名走索引秒查, 文本走 grep, 支持正则/文件类型过滤
+  category: file
+- name: index_project
+  label: 建立索引
+  description: 扫描项目建立函数/类/变量符号索引, 大项目首次运行后 code_search 查符号名秒级返回
+  category: file
+- name: code_edit
+  label: 精确编辑
+  description: 精确编辑代码文件 (search/replace/insert/delete/append), 搜索文本必须唯一, 返回diff
+  category: file
+- name: project_analyze
+  label: 项目分析
+  description: 分析项目结构, 识别语言/框架/依赖/入口/测试框架, 改代码前必用
+  category: file
+- name: git
+  label: Git查看
+  description: 查看 Git 仓库状态/差异/提交记录/分支, 只读操作
+  category: version_control
+- name: http_request
+  label: HTTP请求
+  description: 发送 HTTP 请求获取网页内容或调用 API, 支持 GET/POST/PUT/DELETE, 可自动解析 HTML
+  category: network
+- name: news_search
+  label: 新闻搜索
+  description: 搜索最新热门新闻, 返回标题/摘要/来源/链接, 优先 Tavily 新闻 API, 回退 RSS 源
+  category: news
+- name: parallel_execute
+  label: 并行执行
+  description: 并行执行多个独立子任务, 每个子任务由独立子代理处理, 适合可拆分的多任务场景
+  category: agent
+- name: use_skill
+  label: 加载技能
+  description: 加载已有的技能工作流获取执行步骤引导, 支持列出所有技能或加载特定技能
+  category: agent

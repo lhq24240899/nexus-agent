@@ -1,0 +1,31 @@
+description: '代码重构工作流: 分析→理解→重构→验证'
+name: code_refactor
+required_tools:
+- project_analyze
+- code_search
+- file_read
+- code_edit
+- code_exec
+steps:
+- description: 分析项目结构和技术栈
+  tool: project_analyze
+- description: 搜索需要重构的代码区域
+  tool: code_search
+- description: 完整阅读待重构的文件
+  tool: file_read
+- description: 分步精确重构, 每次小改动
+  tool: code_edit
+- description: 运行测试验证重构不破坏功能
+  tool: code_exec
+tags:
+- refactor
+- quality
+trigger:
+  keywords:
+  - 重构
+  - refactor
+  - 优化代码
+  - 代码优化
+  - 整理代码
+  - clean code
+  patterns: []

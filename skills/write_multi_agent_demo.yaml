@@ -1,0 +1,32 @@
+description: 创建递增编号的multi-agent演示脚本，覆盖消息传递、路由/车队和监管模式。
+improved_at: ''
+name: write_multi_agent_demo
+required_tools:
+- code_exec
+- file_read
+- file_write
+- code_exec
+steps:
+- description: 列出目标目录文件，确认现有脚本编号，避免覆盖冲突。
+  tool: code_exec
+- description: 新建Python脚本（如demo5.py），实现Message数据类、route路由函数和Supervisor类，演示Agent间消息传递与任务分发。
+  tool: file_write
+- description: 运行生成的脚本，验证multi-agent逻辑输出正确。
+  tool: code_exec
+- description: 读取脚本内容，核对代码结构与注释符合预期。
+  tool: file_read
+tags:
+- multi-agent
+- python
+- demo
+- workflow
+trigger:
+  keywords:
+  - multi-agent
+  - agent demo
+  - 消息传递
+  - router模式
+  - supervisor
+  - 编写多智能体示例
+  patterns: []
+version: 1
