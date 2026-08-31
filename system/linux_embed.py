@@ -23,8 +23,26 @@ class LinuxEmbed:
         self.mode = self._detect_mode()
         self.available = self.mode != "none"
         self.container_name = LINUX_CONFIG["container_name"]
-        self.cwd = "~"  # 工作目录状态, 支持 cd 保持
+        # 默认工作目录: WSL 模式下用项目目录的 WSL 路径, 避免 Agent 把文件建到 ~
+        self.cwd = self._default_cwd()
         self._init_env()
+
+    @staticmethod
+    def _win_to_wsl_path(win_path: str) -> str:
+        """Windows 路径转 WSL 路径: D:/project -> /mnt/d/project"""
+        if not win_path or ":" not in win_path:
+            return win_path
+        drive = win_path[0].lower()
+        rest = win_path[2:].replace("\\", "/").lstrip("/")
+        return f"/mnt/{drive}/{rest}"
+
+    def _default_cwd(self) -> str:
+        """根据模式返回默认工作目录"""
+        if self.mode == "wsl":
+            # WSL 模式: 用当前项目目录的 WSL 路径
+            return self._win_to_wsl_path(os.getcwd())
+        # docker/mock 模式用 ~
+        return "~"
 
     def _detect_mode(self) -> str:
         """自动检测可用的 Linux 嵌入方式"""
@@ -91,48 +109,49 @@ class LinuxEmbed:
             self.mode = "mock"
             self.available = True
 
+    CWD_MARKER = "__NEXUS_CWD__"
+
     def _wrap_command(self, command: str) -> str:
         """
-        包装命令: 处理 cd + 保持工作目录 + 加载常用 alias
-        返回 (包装后的命令, 是否是纯cd命令)
+        包装命令: 保持工作目录 + 加载常用 alias + 追加 cwd 标记
+        所有命令(含命令链中的cd)执行后都能正确更新工作目录
         """
-        stripped = command.strip()
-
-        # 处理 cd 命令
-        if stripped.startswith("cd ") or stripped == "cd":
-            parts = stripped.split(maxsplit=1)
-            target = parts[1] if len(parts) > 1 else "~"
-            # 展开 ~
-            if target.startswith("~"):
-                target = "$HOME" + target[1:]
-            self.cwd = target
-            # cd 命令本身不输出, 但执行一下确认目录存在
-            return f"cd {self.cwd} && pwd", True
-
-        # 普通命令: 先 cd 到工作目录, 定义 ll alias, 再执行
+        # 所有命令: 先 cd 到当前目录, 开 alias 展开, 定义 ll, 执行命令, 最后输出标记+pwd
         wrapped = (
             f"cd {self.cwd} 2>/dev/null || cd ~; "
+            f"shopt -s expand_aliases 2>/dev/null; "
             f"alias ll='ls -alF' 2>/dev/null; "
-            f"{command}"
+            f"{command}; "
+            f"echo {self.CWD_MARKER}; pwd"
         )
-        return wrapped, False
+        return wrapped
 
     def exec(self, command: str, timeout: int = 30) -> dict:
         """在嵌入的 Linux 中执行命令 (保持工作目录)"""
-        wrapped, is_cd = self._wrap_command(command)
+        wrapped = self._wrap_command(command)
         if self.mode == "docker":
             result = self._exec_docker(wrapped, timeout)
         elif self.mode == "wsl":
             result = self._exec_wsl(wrapped, timeout)
         elif self.mode == "mock":
             result = self._exec_mock(command)
+            result["cwd"] = self.cwd
+            return result
         else:
             return {"ok": False, "error": "无可用 Linux 环境"}
 
-        # cd 命令成功后, 把 cwd 解析为绝对路径
-        if is_cd and result.get("ok") and result.get("stdout"):
-            self.cwd = result["stdout"].strip()
-            result["stdout"] = ""  # cd 不显示 pwd 输出
+        # 从输出中解析 cwd 标记行, 下一行就是 pwd 输出 (支持命令链中的 cd)
+        stdout = result.get("stdout", "")
+        lines = stdout.split("\n")
+        marker_idx = None
+        for i, line in enumerate(lines):
+            if line.strip() == self.CWD_MARKER:
+                marker_idx = i
+                break
+        if marker_idx is not None and marker_idx + 1 < len(lines):
+            self.cwd = lines[marker_idx + 1].strip()
+            # 去掉标记行和 pwd 行
+            result["stdout"] = "\n".join(lines[:marker_idx]).rstrip("\n")
 
         # 记录当前目录到结果
         result["cwd"] = self.cwd

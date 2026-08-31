@@ -54,6 +54,14 @@ class DecisionCore:
             return self.BRAINSTORM_SYSTEM_PROMPT
         return self.SYSTEM_PROMPT
 
+    def _active_temperature(self) -> float:
+        """按模式返回 temperature: brainstorm高发散, chat自然, work稳定"""
+        if self.mode == "brainstorm":
+            return 0.95
+        if self.mode == "chat":
+            return 0.5
+        return self.temperature  # work 默认 0.7
+
     @staticmethod
     def _is_tool_error(tool_result: str) -> bool:
         """工具返回是否为执行失败 (成功统计与重试提示共用同一判定)"""
@@ -226,7 +234,7 @@ class DecisionCore:
 
             resp = self.client.chat.completions.create(
                 model=self._active_model(),
-                temperature=self.temperature,
+                temperature=self._active_temperature(),
                 messages=messages,
                 **kwargs,
             )
@@ -331,7 +339,7 @@ class DecisionCore:
 
             stream = self.client.chat.completions.create(
                 model=self._active_model(),
-                temperature=self.temperature,
+                temperature=self._active_temperature(),
                 messages=messages,
                 **kwargs,
             )

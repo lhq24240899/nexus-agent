@@ -15,6 +15,7 @@ from libraries.knowledge_updater import KnowledgeUpdater
 from skills.skill_manager import SkillManager
 from mcp.mcp_client import MCPManager
 from tools.code_index import CodeIndex
+from tools.safety import is_dangerous, build_safe_command
 from utils.logger import logger
 from utils.cost_tracker import cost_tracker
 from utils.task_stats import TaskStatsTracker
@@ -385,7 +386,7 @@ class DualCoreAgent:
         else:
             # 完整双核流程
             t1 = time.time()
-            context, allowed_tools = self.secretary.anticipate(task, history_text)
+            context, allowed_tools = self.secretary.anticipate(task, history_text, mode=actual_mode)
             # 技能匹配: 注入工作流引导
             skill_ctx, matched_skill = self._get_skill_context_with_name(task)
             if skill_ctx:
@@ -398,8 +399,8 @@ class DualCoreAgent:
                                           allowed_tools=allowed_tools)
             t3 = time.time()
             tools_used = self.decision.last_tools_used
-            self.secretary.record_result(task, result, tools_used=tools_used, mode=actual_mode)
-            reflection = self.secretary.reflect(task, result, context, mode=actual_mode)
+            self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
+            reflection = "(已按模式差异化沉淀)"
             # 技能使用记录 + 自我改进
             if matched_skill:
                 self._record_and_improve_skill(
@@ -491,7 +492,7 @@ class DualCoreAgent:
         else:
             yield {"type": "status", "message": "秘书正在检索四库..."}
             t1 = time.time()
-            context, allowed_tools = self.secretary.anticipate(task, history_text)
+            context, allowed_tools = self.secretary.anticipate(task, history_text, mode=actual_mode)
             secretary_time = round(time.time() - t1, 2)
             yield {"type": "secretary_done", "context": context,
                    "time_s": secretary_time}
@@ -535,8 +536,8 @@ class DualCoreAgent:
         if not fast_path:
             yield {"type": "status", "message": "秘书正在复盘..."}
             tools_used = self.decision.last_tools_used
-            self.secretary.record_result(task, result, tools_used=tools_used, mode=actual_mode)
-            reflection = self.secretary.reflect(task, result, context, mode=actual_mode)
+            self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
+            reflection = "(已按模式差异化沉淀)"
             # 技能使用记录 + 自我改进 (与非流式路径对齐)
             if matched_skill:
                 self._record_and_improve_skill(
@@ -589,8 +590,20 @@ class DualCoreAgent:
     def run_linux_command(self, command: str) -> dict:
         if not self.linux or not self.linux.available:
             return {"ok": False, "error": "Linux 环境不可用"}
-        logger.log("linux", "执行命令", command[:60])
-        return self.linux.exec(command)
+        # 黑名单检查 (前端面板也必须过安全检查)
+        dangerous, matched = is_dangerous(command)
+        if dangerous:
+            logger.log("linux", "危险命令被拦截", f"{command[:40]} (匹配: {matched})")
+            return {"ok": False, "error": f"命令被安全策略拦截 (匹配规则: {matched})"}
+        # cd 命令不需要资源限制包装
+        stripped = command.strip()
+        if stripped.startswith("cd ") or stripped == "cd":
+            logger.log("linux", "执行命令", command[:60])
+            return self.linux.exec(command, timeout=10)
+        # 资源限制包装 (ulimit + timeout)
+        safe_cmd, profile = build_safe_command(command, "auto")
+        logger.log("linux", "执行命令", f"{command[:60]} [{profile}]")
+        return self.linux.exec(safe_cmd, timeout=60)
 
     def stats(self) -> dict:
         return {

@@ -62,16 +62,16 @@ class SecretaryCore:
 如果任务很简单没什么可反思的, 就说"无特别需要反思的内容"。
 """
 
-    def anticipate(self, task: str, history_text: str = "") -> str:
+    def anticipate(self, task: str, history_text: str = "", mode: str = "work") -> str:
         """
         核心功能: 预判决策核心需要什么
-        1. 从四库向量检索
+        1. 从四库向量检索 (按模式差异化权重)
         2. 结合历史对话, 用 LLM 筛选整理
         """
-        logger.log("secretary", "预判检索开始", f"任务: {task[:50]}")
+        logger.log("secretary", "预判检索开始", f"任务: {task[:50]}, 模式: {mode}")
 
-        # Step 1: 四库向量检索 ("标点定位")
-        results = self.libs.search_all(task, top_k=3)
+        # Step 1: 四库向量检索 ("标点定位"), 按模式差异化 top_k 和权重
+        results = self.libs.search_all(task, mode=mode)
         raw_parts = []
         for lib_name, items in results.items():
             if items:
@@ -233,6 +233,205 @@ class SecretaryCore:
         except Exception as e:
             logger.log("secretary", "反思失败", str(e))
             return f"(反思失败: {e})"
+
+    # ========== 三模式差异化沉淀 ==========
+
+    BRAINSTORM_REFLECT_PROMPT = """你是创意复盘助手。
+【任务】从这次头脑风暴中提炼有价值的创意模式、思维框架或洞察。
+【要求】
+1. 哪些思维角度或方法产生了好创意?
+2. 提炼可复用的创意模式, 简洁具体
+3. 如果没有特别有价值的, 回复"无特别需要沉淀"
+"""
+
+    TOOL_TIP_PROMPT = """你是工具使用教练。
+【任务】从这次工具使用中提炼可复用的技巧。
+【要求】
+1. 哪个工具用得好, 为什么?
+2. 有没有更高效的用法或参数组合?
+3. 踩了什么坑, 怎么避免?
+每条技巧不超过50字, 只输出技巧内容, 不要编号。
+如果没有值得沉淀的, 回复"无特别技巧"。
+"""
+
+    PREF_WORK_PROMPT = """你是用户偏好提取器。
+【任务】从这次技术对话中提取用户明确表达的技术偏好、工作习惯或重要事实。
+【规则】
+1. 只提取用户明确说过的, 不要猜测
+2. 格式: "用户偏好: xxx" 或 "项目事实: xxx"
+3. 例如: "用户偏好: 喜欢简洁代码, 不要过度设计"
+4. 例如: "项目事实: 项目用Python 3.11 + Flask"
+如果没有明确偏好, 回复"无明确偏好"。
+"""
+
+    PREF_CHAT_PROMPT = """你是用户偏好提取器。
+【任务】从这次日常对话中提取用户明确表达的个人偏好、习惯或重要事实。
+【规则】
+1. 只提取用户明确说过的, 不要猜测
+2. 格式: "用户事实: xxx" 或 "用户偏好: xxx"
+3. 例如: "用户事实: 在洛杉矶工作"
+4. 例如: "用户偏好: 喜欢用具体例子解释概念"
+如果没有明确偏好, 回复"无明确偏好"。
+"""
+
+    KNOWLEDGE_EXTRACT_PROMPT = """你是知识提取器。
+【任务】从这次技术任务的结果中提取值得长期保存的通用技术知识。
+【规则】
+1. 只提取通用技术知识、最佳实践、概念解释, 不提取个人经验或任务流水账
+2. 例如: "WebSocket心跳包: 每30秒发ping, 超时未响应则重连"
+3. 例如: "Flask SSE: 用生成器yield数据, 前端EventSource接收, 注意解析data:行"
+4. 每条知识简洁具体, 不超过80字, 只输出知识内容不要编号
+5. 如果没有值得提取的通用知识, 回复"无通用知识"
+"""
+
+    def post_task_learning(self, task: str, result: str, context: str,
+                           tools_used: list = None, mode: str = "work"):
+        """任务完成后的差异化沉淀入口, 按模式决定写哪些库"""
+        if not self.configured:
+            return
+        try:
+            if mode == "work":
+                self._learn_work(task, result, context, tools_used)
+            elif mode == "brainstorm":
+                self._learn_brainstorm(task, result)
+            elif mode == "chat":
+                self._learn_chat(task, result)
+        except Exception as e:
+            logger.log("secretary", "沉淀失败", str(e))
+
+    def _learn_work(self, task, result, context, tools_used):
+        """Work模式: 经验+工具技巧+任务记录+用户偏好"""
+        # 1. 经验库: 任务结果
+        self.record_result(task, result, tools_used=tools_used, mode="work")
+        # 2. 经验库: 反思
+        self.reflect(task, result, context, mode="work")
+        # 3. 工具库: 从工具使用中提炼技巧
+        if tools_used:
+            self._learn_tool_tips(tools_used, task, result)
+        # 4. 记忆库: 任务流水账 (配合 clean_memory 清理)
+        self._record_task_memory(task, result)
+        # 5. 记忆库: 用户偏好提取
+        self._extract_preferences(task, result, self.PREF_WORK_PROMPT, "work")
+        # 6. 知识库: 通用技术知识提取
+        self._extract_knowledge(task, result)
+
+    def _learn_brainstorm(self, task, result):
+        """Brainstorm模式: 只沉淀创意模式到经验库"""
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, temperature=0.3,
+                messages=[
+                    {"role": "system", "content": self.BRAINSTORM_REFLECT_PROMPT},
+                    {"role": "user", "content": f"【脑暴主题】{task[:200]}\n\n【产出】{result[:500]}\n\n请提炼创意模式:"},
+                ],
+            )
+            insight = resp.choices[0].message.content.strip()
+            if insight and "无特别需要沉淀" not in insight:
+                self.libs.experience.add(
+                    f"[创意模式] 主题: {task[:60]}\n洞察: {insight[:300]}",
+                    meta={"type": "creative_insight"}, mode="brainstorm",
+                )
+                logger.log("secretary", "脑暴沉淀", "创意模式已存入经验库")
+        except Exception as e:
+            logger.log("secretary", "脑暴沉淀失败", str(e))
+
+    def _learn_chat(self, task, result):
+        """Chat模式: 只提取用户偏好到记忆库"""
+        self._extract_preferences(task, result, self.PREF_CHAT_PROMPT, "chat")
+
+    def _learn_tool_tips(self, tools_used, task, result):
+        """从工具使用中提炼技巧到工具库"""
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, temperature=0.3,
+                messages=[
+                    {"role": "system", "content": self.TOOL_TIP_PROMPT},
+                    {"role": "user", "content": (
+                        f"【任务】{task[:150]}\n"
+                        f"【使用工具】{', '.join(tools_used)}\n"
+                        f"【结果】{result[:300]}\n\n请提炼技巧:"
+                    )},
+                ],
+            )
+            tips = resp.choices[0].message.content.strip()
+            if tips and "无特别技巧" not in tips:
+                for tip in tips.split("\n"):
+                    tip = tip.strip().lstrip("-*0123456789. ")
+                    if tip and len(tip) > 5:
+                        self.libs.tools.add(
+                            f"{tip}\n(来源: 任务'{task[:40]}' 使用 {', '.join(tools_used[:3])})",
+                            meta={"type": "tool_tip", "tools": tools_used},
+                        )
+                logger.log("secretary", "工具技巧沉淀", f"{len(tools_used)}个工具使用已提炼")
+        except Exception as e:
+            logger.log("secretary", "工具技巧沉淀失败", str(e))
+
+    def _record_task_memory(self, task, result):
+        """记录任务流水账到记忆库 (clean_memory 会定期清理)"""
+        self.libs.memory.add(
+            f"完成过任务: {task[:80]} (结果长度: {len(result)}字)",
+            meta={"type": "task_memory"},
+        )
+
+    def _extract_preferences(self, task, result, prompt, mode):
+        """从对话中提取用户偏好到记忆库"""
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, temperature=0.1,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"【用户说】{task[:300]}\n\n【助手回复】{result[:300]}\n\n请提取偏好:"},
+                ],
+            )
+            prefs = resp.choices[0].message.content.strip()
+            if prefs and "无明确偏好" not in prefs:
+                for line in prefs.split("\n"):
+                    line = line.strip().lstrip("-*0123456789. ")
+                    if line and len(line) > 3:
+                        self.libs.memory.add(
+                            line, meta={"type": "user_preference", "mode": mode},
+                        )
+                logger.log("secretary", "用户偏好提取", f"模式: {mode}")
+        except Exception as e:
+            logger.log("secretary", "偏好提取失败", str(e))
+
+    def _extract_knowledge(self, task, result):
+        """从任务结果中提取通用技术知识到知识库"""
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, temperature=0.2,
+                messages=[
+                    {"role": "system", "content": self.KNOWLEDGE_EXTRACT_PROMPT},
+                    {"role": "user", "content": (
+                        f"【任务】{task[:200]}\n"
+                        f"【结果】{result[:600]}\n\n请提取通用知识:"
+                    )},
+                ],
+            )
+            knowledge = resp.choices[0].message.content.strip()
+            if knowledge and "无通用知识" not in knowledge:
+                added = 0
+                for line in knowledge.split("\n"):
+                    line = line.strip().lstrip("-*0123456789. ")
+                    if line and len(line) > 5:
+                        # 简单去重: 检查知识库是否已有高度相似内容
+                        if not self._knowledge_exists(line):
+                            self.libs.knowledge.add(
+                                line, meta={"type": "auto_extracted", "source_task": task[:40]},
+                            )
+                            added += 1
+                if added > 0:
+                    logger.log("secretary", "知识提取", f"知识库+{added}条")
+        except Exception as e:
+            logger.log("secretary", "知识提取失败", str(e))
+
+    def _knowledge_exists(self, text: str) -> bool:
+        """简单去重: 检查知识库是否已有相似内容(前30字匹配)"""
+        prefix = text[:30]
+        for item in self.libs.knowledge.all():
+            if prefix in item.get("content", ""):
+                return True
+        return False
 
     # 经验库压缩阈值: 超过则自动提炼合并
     EXPERIENCE_COMPACT_THRESHOLD = 30

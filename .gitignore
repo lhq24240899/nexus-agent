@@ -40,3 +40,10 @@ desktop.ini
 
 # ============ Node (如后续引入) ============
 node_modules/
+
+# 临时文件和第三方包
+_edge/
+ima_skills/
+flask_err*.txt
+bug.png
+*.png
