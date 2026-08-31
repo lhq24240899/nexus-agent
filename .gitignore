@@ -47,3 +47,6 @@ ima_skills/
 flask_err*.txt
 bug.png
 *.png
+
+# 环境变量（含密钥，禁止提交）
+.env

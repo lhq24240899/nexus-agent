@@ -13,6 +13,12 @@ from libraries.four_libraries import FourLibraries
 from utils.logger import logger
 from utils.cost_tracker import cost_tracker
 
+try:
+    from integrations.ima_client import get_ima_client
+    _IMA_AVAILABLE = True
+except ImportError:
+    _IMA_AVAILABLE = False
+
 
 class SecretaryCore:
     """秘书核心: 四库管理 + 预判检索 + 上下文整理 + 经验反思"""
@@ -221,12 +227,13 @@ class SecretaryCore:
             )
             # 把有价值的反思存入经验库
             if reflection and "无特别需要反思" not in reflection:
-                self.libs.experience.add(
+                item = self.libs.experience.add(
                     f"[反思] 任务: {task[:60]}\n经验: {reflection[:300]}",
                     meta={"type": "reflection"},
                     mode=mode,
                 )
                 logger.log("secretary", "反思完成", "已存入经验库")
+                self._sync_to_ima(item, task)
             else:
                 logger.log("secretary", "反思完成", "无特别需要反思的内容")
             return reflection
@@ -327,11 +334,12 @@ class SecretaryCore:
             )
             insight = resp.choices[0].message.content.strip()
             if insight and "无特别需要沉淀" not in insight:
-                self.libs.experience.add(
+                item = self.libs.experience.add(
                     f"[创意模式] 主题: {task[:60]}\n洞察: {insight[:300]}",
                     meta={"type": "creative_insight"}, mode="brainstorm",
                 )
                 logger.log("secretary", "脑暴沉淀", "创意模式已存入经验库")
+                self._sync_to_ima(item, task)
         except Exception as e:
             logger.log("secretary", "脑暴沉淀失败", str(e))
 
@@ -637,12 +645,26 @@ class SecretaryCore:
         logger.log("secretary", "记忆库清理", f"{before} → {len(kept)} 条 (删 {removed} 条流水账)")
         return {"ok": True, "old": before, "new": len(kept), "removed": removed}
 
+
+    def _sync_to_ima(self, item, task_summary=""):
+        """异步同步经验到 IMA 笔记（云端备份，失败不影响主流程）"""
+        if not _IMA_AVAILABLE or not item:
+            return
+        try:
+            ima = get_ima_client()
+            if ima.enabled:
+                exp_id = item.get("id", 0)
+                content = item.get("content", "")
+                ima.sync_experience(exp_id, content, task_summary)
+        except Exception as e:
+            logger.log("secretary", "IMA同步跳过", str(e))
+
     def record_result(self, task: str, result: str, tools_used: list = None,
                       success: bool = True, mode: str = "work"):
         """任务完成后沉淀到经验库 (结构化: 成功/失败/工具/可复用模式)"""
         tools_str = ", ".join(tools_used) if tools_used else "无"
         status = "成功" if success else "失败"
-        self.libs.experience.add(
+        item = self.libs.experience.add(
             f"[{status}] 任务: {task[:80]}\n"
             f"使用工具: {tools_str}\n"
             f"结果摘要: {result[:200]}",
@@ -657,6 +679,7 @@ class SecretaryCore:
             logger.log("secretary", "触发后台自动压缩",
                        f"经验库 {len(self.libs.experience)} 条达阈值")
             self.compact_experience_async()
+        self._sync_to_ima(item, task)
 
     def seed_demo_data(self) -> dict:
         """预置实用示例数据 (幂等: 四库已有任何内容则跳过, 防止重复灌入)"""
