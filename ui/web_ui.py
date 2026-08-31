@@ -4,6 +4,8 @@ Web UI —— 对应视频中的可视化界面
       知识库导入 / 远程嵌入 API
 """
 import json
+import queue
+import threading
 from flask import Flask, render_template, request, jsonify, Response
 from config import WEB_CONFIG
 from core.dual_agent import DualCoreAgent
@@ -63,14 +65,62 @@ def create_app() -> Flask:
         if not agent.secretary.configured or not agent.decision.configured:
             return jsonify({"error": "未配置 API Key"}), 400
 
-        def generate():
-            try:
-                for event in agent.run_stream(task, use_secretary=use_secretary, mode=mode):
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        # 断线重连: 浏览器自动带 Last-Event-ID, 跳过已发送的事件
+            last_id = request.headers.get("Last-Event-ID", "")
+            skip_count = int(last_id) if last_id.isdigit() else 0
 
-        return Response(generate(), mimetype="text/event-stream")
+            def generate():
+                q = queue.Queue()
+                stop_event = threading.Event()
+                event_id = 0
+
+                def agent_worker():
+                    try:
+                        for event in agent.run_stream(task, use_secretary=use_secretary, mode=mode):
+                            q.put(("data", event))
+                        q.put(("done", None))
+                    except Exception as e:
+                        q.put(("error", str(e)))
+
+                def heartbeat_worker():
+                    while not stop_event.is_set():
+                        stop_event.wait(10)
+                        if not stop_event.is_set():
+                            q.put(("heartbeat", None))
+
+                threading.Thread(target=agent_worker, daemon=True).start()
+                threading.Thread(target=heartbeat_worker, daemon=True).start()
+
+                while True:
+                    try:
+                        item_type, item_data = q.get(timeout=120)
+                    except queue.Empty:
+                        yield f"id: {event_id}\ndata: {json.dumps({'type': 'error', 'message': 'stream timeout'}, ensure_ascii=False)}\n\n"
+                        break
+                    if item_type == "heartbeat":
+                        yield ": heartbeat\n\n"
+                        continue
+                    # data/error/done 都分配事件ID
+                    event_id += 1
+                    # 断线重连: 跳过已经发送过的事件
+                    if event_id <= skip_count:
+                        if item_type == "done":
+                            break
+                        continue
+                    if item_type == "data":
+                        yield f"id: {event_id}\ndata: {json.dumps(item_data, ensure_ascii=False)}\n\n"
+                    elif item_type == "error":
+                        yield f"id: {event_id}\ndata: {json.dumps({'type': 'error', 'message': item_data}, ensure_ascii=False)}\n\n"
+                        break
+                    elif item_type == "done":
+                        yield f"id: {event_id}\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                        break
+                stop_event.set()
+
+            resp = Response(generate(), mimetype="text/event-stream")
+            resp.headers["Cache-Control"] = "no-cache"
+            resp.headers["X-Accel-Buffering"] = "no"  # 禁用Nginx缓冲
+            return resp
 
     @app.route("/api/history/clear", methods=["POST"])
     def clear_history():

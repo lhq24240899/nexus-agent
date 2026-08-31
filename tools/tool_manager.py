@@ -3,6 +3,8 @@
 从 providers.yaml 读取注册信息, 动态加载工具实例
 支持 plugins/ 目录动态加载自定义工具
 """
+import random
+import time
 import yaml
 import importlib.util
 import sys
@@ -24,6 +26,24 @@ from tools.use_skill import UseSkillTool
 from tools.cleanup import CleanupTempTool
 
 PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
+
+# 会发起网络请求的工具, 只有这些工具的瞬时错误才自动重试
+NETWORK_TOOLS = {"web_search", "http_request", "news_search"}
+
+# 瞬时错误特征 (匹配到则认为是网络/瞬时错误, 可重试)
+TRANSIENT_ERROR_MARKERS = (
+    "timeout", "timed out", "connection", "connect error", "network",
+    "econnreset", "econnrefused", "etimedout",
+    "502", "503", "504", "429", "rate limit", "too many requests",
+    "超时", "连接超时", "连接失败", "网络错误", "请求失败",
+)
+
+
+def _is_transient_error(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    return any(m in t for m in TRANSIENT_ERROR_MARKERS)
 
 
 class ToolManager:
@@ -186,13 +206,31 @@ class ExamplePluginTool(BaseTool):
         return funcs
 
     def execute(self, name: str, **kwargs) -> str:
-        # MCP 工具优先路由
-        if self._mcp_manager and self._mcp_manager.has_tool(name):
-            return self._mcp_manager.execute(name, **kwargs)
-        tool = self.tools.get(name)
-        if not tool:
-            return f"错误: 工具 '{name}' 不存在"
-        return tool.execute(**kwargs)
+        # MCP 工具优先路由 (MCP 工具也可能走网络, 纳入重试)
+        is_mcp = self._mcp_manager and self._mcp_manager.has_tool(name)
+        if is_mcp:
+            raw_exec = lambda: self._mcp_manager.execute(name, **kwargs)
+        else:
+            tool = self.tools.get(name)
+            if not tool:
+                return f"错误: 工具 '{name}' 不存在"
+            raw_exec = lambda: tool.execute(**kwargs)
+
+        # 第一次执行
+        try:
+            result = raw_exec()
+        except Exception as e:
+            result = f"错误: {type(e).__name__}: {e}"
+
+        # 仅网络类工具的瞬时错误自动重试一次
+        if (name in NETWORK_TOOLS or is_mcp) and _is_transient_error(result):
+            time.sleep(0.5 + random.random() * 0.5)  # 0.5~1.0s 随机退避
+            try:
+                result = raw_exec()
+            except Exception as e:
+                result = f"错误(重试后仍失败): {type(e).__name__}: {e}"
+
+        return result
 
     def list_tools(self) -> list[dict]:
         tools = [
