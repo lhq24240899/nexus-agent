@@ -5,8 +5,10 @@
 2. 预判决策核心需要什么, 检索并整理上下文 ("递到面前")
 3. 任务完成后沉淀经验 + 反思复盘
 """
+import threading
+import time
 from openai import OpenAI
-from config import SECRETARY_CONFIG
+from config import SECRETARY_CONFIG, DATA_DIR
 from libraries.four_libraries import FourLibraries
 from utils.logger import logger
 from utils.cost_tracker import cost_tracker
@@ -27,6 +29,10 @@ class SecretaryCore:
         self.configured = bool(SECRETARY_CONFIG["api_key"])
         self.libs = FourLibraries()
         self.tool_manager = None  # 由 dual_agent 注入
+        # 经验压缩异步状态
+        self._compact_lock = threading.Lock()
+        self._compact_running = False
+        self._last_compact_result: dict | None = None
 
     SYSTEM_PROMPT = """你是 Nexus 双核 Agent 的秘书。
 
@@ -233,8 +239,122 @@ class SecretaryCore:
 {raw_experiences}
 """
 
+    def compact_status(self) -> dict:
+        """经验压缩状态查询 (供前端展示)"""
+        return {
+            "running": self._compact_running,
+            "last_result": self._last_compact_result,
+            "current_count": len(self.libs.experience),
+            "threshold": self.EXPERIENCE_COMPACT_THRESHOLD,
+        }
+
+    def compact_experience_async(self) -> dict:
+        """非阻塞触发经验压缩, 立即返回状态; 压缩在后台 daemon 线程执行
+
+        关键: 按 max_id 快照, 压缩期间新增的条目(id > snapshot)不受影响,
+        解决同步压缩 clear()+add() 会丢新数据的竞态。
+        """
+        if not self.configured:
+            return {"ok": False, "reason": "未配置 API, 无法压缩"}
+        with self._compact_lock:
+            if self._compact_running:
+                return {"ok": False, "reason": "正在压缩中", "running": True}
+            count = len(self.libs.experience)
+            if count < self.EXPERIENCE_COMPACT_THRESHOLD:
+                return {"ok": False,
+                        "reason": f"经验库仅 {count} 条, 未达阈值 {self.EXPERIENCE_COMPACT_THRESHOLD}"}
+            snapshot_max_id = self.libs.experience.db.query_one(
+                "SELECT MAX(id) FROM experience"
+            )[0] or 0
+            self._compact_running = True
+        t = threading.Thread(
+            target=self._do_compact_background,
+            args=(snapshot_max_id,),
+            daemon=True, name="experience-compact",
+        )
+        t.start()
+        logger.log("secretary", "经验压缩后台启动",
+                   f"快照 id<={snapshot_max_id}, 当前 {count} 条")
+        return {"ok": True, "async": True, "snapshot_id": snapshot_max_id,
+                "message": "经验压缩已在后台开始"}
+
+    def _backup_experience(self, items: list[dict]):
+        """压缩前备份经验库到 data/backups/, 防止 LLM 提炼丢信息"""
+        try:
+            backup_dir = DATA_DIR / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_file = backup_dir / f"experience_{time.strftime('%Y%m%d_%H%M%S')}.json"
+            import json
+            backup_file.write_text(
+                json.dumps(items, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            # 只保留最近 5 个备份
+            backups = sorted(backup_dir.glob("experience_*.json"))
+            for old_bak in backups[:-5]:
+                old_bak.unlink(missing_ok=True)
+            logger.log("secretary", "经验库已备份", f"{backup_file.name} ({len(items)} 条)")
+        except Exception as e:
+            logger.log("secretary", "经验库备份失败", str(e))
+
+    def _do_compact_background(self, snapshot_max_id: int):
+        """后台线程: 备份 → LLM 提炼 → 按快照范围删除 → 插入精炼条目"""
+        try:
+            snapshot = [i for i in self.libs.experience.all()
+                        if i["id"] <= snapshot_max_id]
+            if not snapshot:
+                return
+            self._backup_experience(snapshot)
+
+            raw_text = "\n".join(
+                f"[{i+1}] {item['content'][:200]}"
+                for i, item in enumerate(snapshot)
+            )
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                temperature=0.2,
+                messages=[{
+                    "role": "user",
+                    "content": self.COMPACT_PROMPT.format(
+                        keep=self.EXPERIENCE_COMPACT_KEEP,
+                        raw_experiences=raw_text[:6000],
+                    ),
+                }],
+            )
+            refined = resp.choices[0].message.content.strip()
+            usage = resp.usage
+            cost_tracker.record(
+                model=self.model,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                task="经验库压缩(异步)",
+            )
+
+            old_count = len(snapshot)
+            deleted = self.libs.experience.delete_before(snapshot_max_id)
+            added = 0
+            for line in refined.splitlines():
+                line = line.strip().lstrip("-•*0123456789.) ")
+                if line and len(line) > 5:
+                    self.libs.experience.add(line, meta={"type": "compacted"})
+                    added += 1
+
+            logger.log("secretary", "经验库后台压缩完成",
+                       f"{old_count} 条(删{deleted}) → {added} 条")
+            self._last_compact_result = {
+                "ok": True, "old": old_count, "new": added,
+                "deleted": deleted, "async": True,
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        except Exception as e:
+            logger.log("secretary", "经验库后台压缩失败", str(e))
+            self._last_compact_result = {"ok": False, "error": str(e)}
+        finally:
+            with self._compact_lock:
+                self._compact_running = False
+
     def compact_experience(self) -> dict:
-        """经验库压缩: 超过阈值时调用 LLM 提炼合并"""
+        """经验库压缩: 超过阈值时调用 LLM 提炼合并 (同步, 手动触发用)"""
         count = len(self.libs.experience)
         if count < self.EXPERIENCE_COMPACT_THRESHOLD:
             return {"ok": False, "reason": f"经验库仅 {count} 条, 未达阈值 {self.EXPERIENCE_COMPACT_THRESHOLD}"}
@@ -267,8 +387,9 @@ class SecretaryCore:
                 task="经验库压缩",
             )
 
-            # 清空旧经验, 写入精炼后的
+            # 压缩前备份, 再清空旧经验写入精炼后的
             old_count = len(self.libs.experience)
+            self._backup_experience(self.libs.experience.all())
             self.libs.experience.clear()
 
             added = 0
@@ -315,14 +436,21 @@ class SecretaryCore:
         )
         logger.log("secretary", "沉淀完成",
                    f"经验库+1 ({status}, 工具: {tools_str})")
-        # 自动检查是否需要压缩
+        # 自动检查是否需要压缩 (异步, 不阻塞任务返回)
         if len(self.libs.experience) >= self.EXPERIENCE_COMPACT_THRESHOLD:
-            logger.log("secretary", "触发自动压缩",
+            logger.log("secretary", "触发后台自动压缩",
                        f"经验库 {len(self.libs.experience)} 条达阈值")
-            self.compact_experience()
+            self.compact_experience_async()
 
-    def seed_demo_data(self):
-        """预置实用示例数据"""
+    def seed_demo_data(self) -> dict:
+        """预置实用示例数据 (幂等: 四库已有任何内容则跳过, 防止重复灌入)"""
+        existing = (len(self.libs.knowledge) + len(self.libs.tools)
+                    + len(self.libs.experience) + len(self.libs.memory))
+        if existing > 0:
+            logger.log("system", "预置示例数据跳过", f"四库已有 {existing} 条, 不重复填充")
+            return {"ok": False, "skipped": True, "existing": existing,
+                    "message": f"四库已有 {existing} 条内容, 跳过重复填充"}
+
         # ========== 知识库：真正有用的技术知识 ==========
         knowledge_items = [
             # API 与成本
@@ -406,3 +534,5 @@ class SecretaryCore:
         total = (len(self.libs.knowledge) + len(self.libs.tools) +
                  len(self.libs.experience) + len(self.libs.memory))
         logger.log("system", "预置示例数据", f"四库已填充 {total} 条实用内容")
+        return {"ok": True, "skipped": False, "added": total, "total": total,
+                "message": f"示例数据已填充, 共 {total} 条"}

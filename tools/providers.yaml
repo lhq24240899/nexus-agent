@@ -63,3 +63,7 @@
   label: 加载技能
   description: 加载已有的技能工作流获取执行步骤引导, 支持列出所有技能或加载特定技能
   category: agent
+- name: cleanup_temp
+  label: 清理临时文件
+  description: 清理本次任务在 temp/ 临时工作目录中生成的测试验证文件, 验证完成后主动调用
+  category: system

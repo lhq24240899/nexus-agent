@@ -28,7 +28,33 @@ class DecisionCore:
         self.tool_manager = tool_manager
         self.max_tool_calls = 8
         self.last_tools_used: list[str] = []
+        # 本轮决策中工具执行失败的次数 (成功判定依据, 每次 decide 开头重置)
+        self.last_tool_errors = 0
+        # 模式: work=完整编码助手, chat=轻量聊天 (影响系统提示词/工具/模型)
+        self.mode = "work"
+        # 模型覆盖: None 用默认决策模型, 非 None 时临时切换 (聊天模式用 flash)
+        self.override_model: str | None = None
         self.ctx_manager = ContextManager(model=self.model, llm_client=self.client if self.configured else None)
+
+    def set_mode(self, mode: str):
+        """切换工作/聊天模式 (由 DualCoreAgent 在任务前调用)"""
+        self.mode = mode if mode in ("work", "chat") else "work"
+
+    def _active_model(self) -> str:
+        return self.override_model or self.model
+
+    def _active_system_prompt(self) -> str:
+        return self.CHAT_SYSTEM_PROMPT if self.mode == "chat" else self.SYSTEM_PROMPT
+
+    @staticmethod
+    def _is_tool_error(tool_result: str) -> bool:
+        """工具返回是否为执行失败 (成功统计与重试提示共用同一判定)"""
+        return tool_result.startswith(("错误", "失败", "[子代理异常]"))
+
+    @property
+    def last_had_tool_error(self) -> bool:
+        """本轮决策是否出现过工具执行失败"""
+        return self.last_tool_errors > 0
 
     SYSTEM_PROMPT = """你是 Nexus —— 专业编码助手, 双核 Agent 的决策核心。
 
@@ -56,6 +82,12 @@ class DecisionCore:
 4. 验证(必须): code_exec 跑测试/lint → 失败就看错误→修复→重跑, 直到通过
 5. 总结: 改了哪些文件、验证结果、未解决的问题
 
+【临时文件规则 —— 必须遵守】
+- 测试、验证、演示用的一次性文件(测试脚本/临时数据/输出产物)必须写入用户消息中标注的【临时工作目录】, 严禁写到项目根目录或其他位置
+- 验证完成后必须主动调用 cleanup_temp 工具删除本次产生的临时文件, 再给出最终回答
+- 正式源码和用户要求持久保留的文件禁止放入临时目录(任务结束会被自动清空)
+- code_exec 自身运行后会删除脚本, 但脚本里 open() 写出的文件不会, 这类文件同样必须落在临时目录并在事后清理
+
 【强制验证 —— 严禁幻觉】
 - 创建/修改/删除文件后, 必须用 file_list 或 ls 验证文件确实存在
 - 执行命令后检查退出码, 不能假设成功
@@ -73,6 +105,24 @@ class DecisionCore:
 
 ## 说明
 (如果有需要注意的地方)
+"""
+
+    CHAT_SYSTEM_PROMPT = """你是 Nexus —— 个人聊天助手, 当前处于聊天模式。
+
+【定位】
+- 轻松、自然、简洁地对话, 像朋友聊天, 不要长篇大论
+- 先给结论, 再给必要细节; 能一句话说清就不写三段
+- 用户问技术/概念可以解释, 但不要主动执行工程任务(写代码/改文件/跑命令)
+
+【可用工具】
+- web_search: 查实时信息、新闻、资料
+- current_time: 看当前时间
+- 其他工具不要调用 (聊天模式不碰文件和代码)
+
+【不要做】
+- 不要输出"修改总结/验证结果"这类工程化格式
+- 不要调用编码工具或创建文件
+- 不要编造事实, 不确定就说不确定
 """
 
     def _get_filtered_functions(self, allowed_tools: list[str] = None) -> list:
@@ -94,7 +144,7 @@ class DecisionCore:
             f"{history_section}"
         )
         return [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": self._active_system_prompt()},
             {"role": "user", "content": user_content},
         ]
 
@@ -104,6 +154,7 @@ class DecisionCore:
         logger.log("nexus", "开始决策",
                    f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}")
         self.last_tools_used = []
+        self.last_tool_errors = 0
         messages = self._build_messages(task, context, history_text)
         total_input = 0
         total_output = 0
@@ -125,7 +176,7 @@ class DecisionCore:
                 kwargs["tool_choice"] = "auto"
 
             resp = self.client.chat.completions.create(
-                model=self.model,
+                model=self._active_model(),
                 temperature=self.temperature,
                 messages=messages,
                 **kwargs,
@@ -149,8 +200,9 @@ class DecisionCore:
                     tool_result = self.tool_manager.execute(tool_name, **tool_args)
                     # 工具结果截断, 防止撑爆上下文
                     tool_result = truncate_tool_result(tool_result)
-                    # 错误时附加重试提示
-                    if tool_result.startswith("错误") or tool_result.startswith("失败"):
+                    # 错误时计数并附加重试提示
+                    if self._is_tool_error(tool_result):
+                        self.last_tool_errors += 1
                         tool_result += (
                             "\n\n[系统提示] 工具执行失败, 请检查参数是否正确。"
                             "如果是文件不存在, 先用 file_list 确认路径; "
@@ -192,6 +244,7 @@ class DecisionCore:
         logger.log("nexus", "开始流式决策",
                    f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}")
         self.last_tools_used = []
+        self.last_tool_errors = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
         messages = self._build_messages(task, context, history_text)
@@ -216,7 +269,7 @@ class DecisionCore:
                 kwargs["tool_choice"] = "auto"
 
             stream = self.client.chat.completions.create(
-                model=self.model,
+                model=self._active_model(),
                 temperature=self.temperature,
                 messages=messages,
                 **kwargs,
@@ -301,8 +354,9 @@ class DecisionCore:
                     logger.log("nexus", "调用工具",
                                f"{tool_name}({json.dumps(tool_args, ensure_ascii=False)[:50]})")
                     tool_result = self.tool_manager.execute(tool_name, **tool_args)
-                    # 错误时附加重试提示
-                    if tool_result.startswith("错误") or tool_result.startswith("失败"):
+                    # 错误时计数并附加重试提示
+                    if self._is_tool_error(tool_result):
+                        self.last_tool_errors += 1
                         tool_result += (
                             "\n\n[系统提示] 工具执行失败, 请检查参数是否正确。"
                             "如果是文件不存在, 先用 file_list 确认路径; "

@@ -43,11 +43,12 @@ def create_app() -> Flask:
         data = request.get_json()
         task = data.get("message", "").strip()
         use_secretary = data.get("use_secretary", "auto")
+        mode = data.get("mode")  # None=用会话当前模式
         if not task:
             return jsonify({"error": "消息不能为空"}), 400
         if not agent.secretary.configured or not agent.decision.configured:
             return jsonify({"error": "未配置 API Key"}), 400
-        record = agent.run(task, use_secretary=use_secretary)
+        record = agent.run(task, use_secretary=use_secretary, mode=mode)
         return jsonify(record)
 
     @app.route("/api/chat/stream", methods=["POST"])
@@ -56,6 +57,7 @@ def create_app() -> Flask:
         data = request.get_json()
         task = data.get("message", "").strip()
         use_secretary = data.get("use_secretary", "auto")
+        mode = data.get("mode")
         if not task:
             return jsonify({"error": "消息不能为空"}), 400
         if not agent.secretary.configured or not agent.decision.configured:
@@ -63,7 +65,7 @@ def create_app() -> Flask:
 
         def generate():
             try:
-                for event in agent.run_stream(task, use_secretary=use_secretary):
+                for event in agent.run_stream(task, use_secretary=use_secretary, mode=mode):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
@@ -123,6 +125,19 @@ def create_app() -> Flask:
     def stats():
         return jsonify(agent.stats())
 
+    # ============ 模式切换 ============
+    @app.route("/api/mode", methods=["GET"])
+    def get_mode():
+        return jsonify({"mode": agent.get_mode(),
+                        "available": ["work", "chat"]})
+
+    @app.route("/api/mode", methods=["POST"])
+    def set_mode():
+        data = request.get_json() or {}
+        mode = data.get("mode", "work")
+        actual = agent.set_mode(mode)
+        return jsonify({"ok": True, "mode": actual})
+
     @app.route("/api/task-stats")
     def task_stats():
         return jsonify(agent.stats_tracker.summary())
@@ -179,9 +194,55 @@ def create_app() -> Flask:
 
     @app.route("/api/libraries/compact", methods=["POST"])
     def libraries_compact():
-        """经验库压缩: 去重合并提炼"""
+        """经验库压缩: 去重合并提炼 (同步, 手动触发)"""
         result = agent.secretary.compact_experience()
         return jsonify(result)
+
+    @app.route("/api/libraries/compact-async", methods=["POST"])
+    def libraries_compact_async():
+        """经验库压缩: 后台异步触发, 立即返回"""
+        result = agent.secretary.compact_experience_async()
+        return jsonify(result)
+
+    @app.route("/api/libraries/compact-status")
+    def libraries_compact_status():
+        return jsonify(agent.secretary.compact_status())
+
+    # ============ 项目档案 ============
+    @app.route("/api/project-profile")
+    def project_profile_get():
+        """查询项目档案: ?path= 指定路径查单个, 不传则列出全部"""
+        path = request.args.get("path", "").strip()
+        if path:
+            prof = agent.project_profile.get(path)
+            if not prof:
+                # 尝试按目录前缀匹配
+                prof = agent.project_profile.get_for_directory(path)
+            if not prof:
+                return jsonify({"error": "未找到项目档案", "path": path}), 404
+            return jsonify(prof)
+        return jsonify({"profiles": agent.project_profile.list()})
+
+    @app.route("/api/project-profile", methods=["DELETE"])
+    def project_profile_delete():
+        data = request.get_json(silent=True) or {}
+        path = data.get("path", "").strip()
+        if not path:
+            return jsonify({"error": "path 不能为空"}), 400
+        ok = agent.project_profile.delete(path)
+        return jsonify({"ok": ok, "path": path})
+
+    @app.route("/api/project-profile/refresh", methods=["POST"])
+    def project_profile_refresh():
+        """重新分析项目并刷新档案"""
+        data = request.get_json(silent=True) or {}
+        path = data.get("path", ".").strip()
+        tool = agent.tool_manager.get_tool("project_analyze")
+        if not tool:
+            return jsonify({"error": "project_analyze 工具未加载"}), 500
+        result_text = tool.execute(path=path)
+        prof = agent.project_profile.get(path)
+        return jsonify({"ok": True, "path": path, "profile": prof, "preview": result_text[:300]})
 
     @app.route("/api/libraries/clean-memory", methods=["POST"])
     def libraries_clean_memory():
@@ -218,8 +279,8 @@ def create_app() -> Flask:
     # ============ 示例数据 ============
     @app.route("/api/seed", methods=["POST"])
     def seed():
-        agent.secretary.seed_demo_data()
-        return jsonify({"ok": True, "message": "示例数据已填充"})
+        result = agent.secretary.seed_demo_data()
+        return jsonify(result)
 
     # ============ 远程嵌入 ============
     @app.route("/api/embed/snippet")

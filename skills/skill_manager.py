@@ -7,11 +7,11 @@
 import yaml
 import re
 import json
-import sqlite3
 import time
 from pathlib import Path
 from typing import Optional
 from config import DATA_DIR
+from utils.db import get_db
 
 SKILLS_DIR = Path(__file__).parent.parent / "skills"
 DB_PATH = DATA_DIR / "nexus.db"
@@ -113,20 +113,21 @@ class SkillManager:
 
     def _init_db(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS skill_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                skill_name TEXT,
-                task TEXT,
-                success INTEGER,
-                tools_used TEXT,
-                tool_count INTEGER,
-                duration REAL,
-                timestamp TEXT
-            )
-        """)
-        self.conn.commit()
+        self.db = get_db()
+        self.conn = self.db.conn  # 共享全局连接
+        with self.db.transaction():
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS skill_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    skill_name TEXT,
+                    task TEXT,
+                    success INTEGER,
+                    tools_used TEXT,
+                    tool_count INTEGER,
+                    duration REAL,
+                    timestamp TEXT
+                )
+            """)
 
     def _load_skills(self):
         if not SKILLS_DIR.exists():
@@ -256,14 +257,13 @@ class SkillManager:
     def record_usage(self, skill_name: str, task: str, success: bool,
                      tools_used: list[str], duration: float):
         """记录技能使用结果 + 更新置信度 + 连续失败计数"""
-        self.conn.execute(
+        self.db.execute(
             "INSERT INTO skill_usage (skill_name, task, success, tools_used, tool_count, duration, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (skill_name, task[:200], 1 if success else 0,
              json.dumps(tools_used, ensure_ascii=False),
              len(tools_used), duration,
              time.strftime("%Y-%m-%d %H:%M:%S")),
         )
-        self.conn.commit()
         # 更新置信度
         if skill_name in self.skills:
             skill = self.skills[skill_name]
@@ -372,8 +372,7 @@ class SkillManager:
             self._save_skill(skill)
 
             # 清空该技能的使用记录(改进后重新积累)
-            self.conn.execute("DELETE FROM skill_usage WHERE skill_name = ?", (skill_name,))
-            self.conn.commit()
+            self.db.execute("DELETE FROM skill_usage WHERE skill_name = ?", (skill_name,))
 
             return {
                 "ok": True,

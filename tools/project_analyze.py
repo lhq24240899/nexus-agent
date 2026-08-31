@@ -87,7 +87,11 @@ class ProjectAnalyzeTool(BaseTool):
     description = (
         "分析项目结构, 识别编程语言、框架、依赖、入口文件、测试框架。"
         "改代码前必须先用这个工具了解项目。返回项目概览和关键文件列表。"
+        "分析结果自动保存为项目档案, 后续编码任务自动注入。"
     )
+
+    def __init__(self, profile_manager=None):
+        self.profile_manager = profile_manager
     params_schema = {
         "type": "object",
         "properties": {
@@ -97,36 +101,26 @@ class ProjectAnalyzeTool(BaseTool):
         "required": ["path"],
     }
 
-    def execute(self, path: str = ".", max_depth: int = 3, **kwargs) -> str:
-        if not _is_allowed(path):
-            return f"错误: 路径不在允许范围内: {path}"
-
+    def analyze(self, path: str = ".", max_depth: int = 3) -> dict:
+        """结构化分析项目, 返回字典 (供 execute 格式化和档案保存共用)"""
         root = Path(path).resolve()
-        if not root.exists():
-            return f"错误: 目录不存在: {path}"
-        if not root.is_dir():
-            return f"错误: 不是目录: {path}"
-
         # 收集文件
         all_files = []
         dirs = []
-        try:
-            for item in root.rglob("*"):
-                try:
-                    rel = item.relative_to(root)
-                    depth = len(rel.parts)
-                    if depth > max_depth + 1:
-                        continue
-                    if any(_should_skip(p) for p in rel.parts):
-                        continue
-                    if item.is_file():
-                        all_files.append(str(rel))
-                    elif item.is_dir() and depth <= max_depth:
-                        dirs.append(str(rel) + "/")
-                except Exception:
+        for item in root.rglob("*"):
+            try:
+                rel = item.relative_to(root)
+                depth = len(rel.parts)
+                if depth > max_depth + 1:
                     continue
-        except Exception as e:
-            return f"扫描失败: {e}"
+                if any(_should_skip(p) for p in rel.parts):
+                    continue
+                if item.is_file():
+                    all_files.append(str(rel))
+                elif item.is_dir() and depth <= max_depth:
+                    dirs.append(str(rel) + "/")
+            except Exception:
+                continue
 
         # 识别语言
         languages = []
@@ -202,7 +196,7 @@ class ProjectAnalyzeTool(BaseTool):
             "Pipfile", "setup.py",
         )]
 
-        # 目录结构 (前2层)
+        # 目录结构
         tree_lines = []
         top_dirs = sorted(set(d.split("/")[0] for d in dirs if "/" in d or d.endswith("/")))
         for d in top_dirs[:20]:
@@ -211,30 +205,58 @@ class ProjectAnalyzeTool(BaseTool):
         for f in top_files[:30]:
             tree_lines.append(f"  {f}")
 
+        return {
+            "root": str(root),
+            "languages": languages,
+            "frameworks": frameworks,
+            "tests": tests,
+            "entry_files": entry_candidates,
+            "dep_files": dep_files,
+            "file_count": len(all_files),
+            "tree": tree_lines,
+        }
+
+    def execute(self, path: str = ".", max_depth: int = 3, **kwargs) -> str:
+        if not _is_allowed(path):
+            return f"错误: 路径不在允许范围内: {path}"
+        root = Path(path).resolve()
+        if not root.exists():
+            return f"错误: 目录不存在: {path}"
+        if not root.is_dir():
+            return f"错误: 不是目录: {path}"
+
+        try:
+            info = self.analyze(path, max_depth)
+        except Exception as e:
+            return f"扫描失败: {e}"
+
+        languages = info["languages"]
+        frameworks = info["frameworks"]
+
         # 构建输出
         output = []
-        output.append(f"📦 项目分析: {root}")
+        output.append(f"📦 项目分析: {info['root']}")
         output.append(f"{'=' * 50}")
         output.append(f"语言: {', '.join(languages) if languages else '未识别'}")
         output.append(f"框架: {', '.join(frameworks) if frameworks else '未识别'}")
-        output.append(f"测试: {', '.join(tests) if tests else '未发现测试'}")
-        output.append(f"文件数: {len(all_files)} (扫描深度 {max_depth})")
+        output.append(f"测试: {', '.join(info['tests']) if info['tests'] else '未发现测试'}")
+        output.append(f"文件数: {info['file_count']} (扫描深度 {max_depth})")
         output.append("")
 
-        if entry_candidates:
+        if info["entry_files"]:
             output.append("🚪 入口文件:")
-            for f in entry_candidates[:5]:
+            for f in info["entry_files"][:5]:
                 output.append(f"  - {f}")
             output.append("")
 
-        if dep_files:
+        if info["dep_files"]:
             output.append("📦 依赖文件:")
-            for f in dep_files:
+            for f in info["dep_files"]:
                 output.append(f"  - {f}")
             output.append("")
 
         output.append("📁 目录结构:")
-        output.extend(tree_lines)
+        output.extend(info["tree"])
         output.append("")
 
         # 编码建议
@@ -249,5 +271,21 @@ class ProjectAnalyzeTool(BaseTool):
             output.append("  - 改完用 code_exec 运行 npm test / npm run lint")
         if not languages:
             output.append("  - 未识别语言, 先用 file_list 查看目录结构")
+
+        # 自动保存项目档案
+        if self.profile_manager:
+            try:
+                self.profile_manager.save(
+                    path=info["root"],
+                    languages=languages,
+                    frameworks=frameworks,
+                    test_frameworks=info["tests"],
+                    entry_files=info["entry_files"],
+                    dep_files=info["dep_files"],
+                )
+                output.append("")
+                output.append("✅ 项目档案已保存, 后续编码任务自动注入")
+            except Exception as e:
+                output.append(f"⚠️ 档案保存失败: {e}")
 
         return "\n".join(output)

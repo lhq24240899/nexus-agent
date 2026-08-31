@@ -14,7 +14,7 @@ class UseSkillTool(BaseTool):
         "重构用 code_refactor, 新功能用 add_feature。"
         "调用后会返回该技能的详细执行步骤, 请严格按步骤执行。"
     )
-    parameters = {
+    params_schema = {
         "type": "object",
         "properties": {
             "skill_name": {

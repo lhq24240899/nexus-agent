@@ -9,7 +9,7 @@ class ExamplePluginTool(BaseTool):
     """示例插件工具: 回显输入"""
     name = "example_echo"
     description = "示例插件工具, 回显输入的消息"
-    parameters = {
+    params_schema = {
         "type": "object",
         "properties": {
             "message": {"type": "string", "description": "要回显的消息"},

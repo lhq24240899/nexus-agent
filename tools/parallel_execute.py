@@ -13,7 +13,7 @@ class ParallelExecuteTool(BaseTool):
         "并行执行多个独立的子任务。当任务可以拆分为互不依赖的子任务时使用, "
         "例如同时分析多个文件、同时查询多个信息源。每个子任务独立推理和调用工具。"
     )
-    parameters = {
+    params_schema = {
         "type": "object",
         "properties": {
             "tasks": {

@@ -21,6 +21,7 @@ from tools.http_request import HttpRequestTool
 from tools.news_search import NewsSearchTool
 from tools.parallel_execute import ParallelExecuteTool
 from tools.use_skill import UseSkillTool
+from tools.cleanup import CleanupTempTool
 
 PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
 
@@ -45,14 +46,16 @@ class ToolManager:
         "news_search": NewsSearchTool,
         "parallel_execute": ParallelExecuteTool,
         "use_skill": UseSkillTool,
+        "cleanup_temp": CleanupTempTool,
     }
 
-    def __init__(self, linux_embed=None, code_index=None):
+    def __init__(self, linux_embed=None, code_index=None, profile_manager=None):
         self.tools: dict[str, BaseTool] = {}
         self._registry: list[dict] = []
         self._plugin_modules: list = []
         self._mcp_manager = None
         self.code_index = code_index
+        self.profile_manager = profile_manager
         self._load_registry()
         self._init_tools(linux_embed)
         self._load_plugins()
@@ -62,6 +65,12 @@ class ToolManager:
                 self.tools["code_search"].code_index = code_index
             if "index_project" in self.tools:
                 self.tools["index_project"].code_index = code_index
+            if "file_write" in self.tools:
+                self.tools["file_write"].code_index = code_index
+            if "code_edit" in self.tools:
+                self.tools["code_edit"].code_index = code_index
+        if profile_manager and "project_analyze" in self.tools:
+            self.tools["project_analyze"].profile_manager = profile_manager
 
     def _load_registry(self):
         yaml_path = Path(__file__).parent / "providers.yaml"
@@ -125,7 +134,7 @@ class ExamplePluginTool(BaseTool):
     """示例插件工具: 回显输入"""
     name = "example_echo"
     description = "示例插件工具, 回显输入的消息"
-    parameters = {
+    params_schema = {
         "type": "object",
         "properties": {
             "message": {"type": "string", "description": "要回显的消息"},

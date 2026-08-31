@@ -1,4 +1,7 @@
+confidence: 1.0
+consecutive_failures: 0
 description: '系统化调试 Python 错误: 读取代码→复现→定位→修复→验证'
+improved_at: ''
 name: debug_python_error
 required_tools:
 - file_read
@@ -31,3 +34,4 @@ trigger:
   - exception
   patterns:
   - (报错|错误|error|exception).{0,20}(python|py|\.py)
+version: 1

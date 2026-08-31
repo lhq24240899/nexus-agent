@@ -55,6 +55,13 @@ WEB_CONFIG = {
     "debug": False,
 }
 
+# ============ 模型分级路由 ============
+# 工作模式(编码/复杂任务)用决策模型, 聊天模式用轻量模型省钱
+MODEL_ROUTING = {
+    "work": os.getenv("WORK_MODEL", DECISION_CONFIG["model"]),
+    "chat": os.getenv("CHAT_MODEL", "deepseek-v4-flash"),
+}
+
 # ============ 搜索 API 配置 ============
 SEARCH_CONFIG = {
     "tavily_api_key": os.getenv("TAVILY_API_KEY", ""),

@@ -4,12 +4,9 @@
 code_search 优先查索引, 找不到再回退 grep
 """
 import re
-import sqlite3
 import os
-from pathlib import Path
 from config import DATA_DIR
-
-DB_PATH = DATA_DIR / "nexus.db"
+from utils.db import get_db
 
 # 支持的语言和对应的符号提取正则
 LANG_PATTERNS = {
@@ -42,43 +39,38 @@ LANG_PATTERNS = {
 
 # 跳过的目录
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv",
-             "dist", "build", ".next", ".nuxt", "data", "logs"}
+             "dist", "build", ".next", ".nuxt", "data", "logs", "temp"}
 
 
 class CodeIndex:
-    """代码符号索引"""
+    """代码符号索引 (共享全局 SQLite 连接)"""
 
-    def __init__(self, db_conn: sqlite3.Connection = None):
-        if db_conn:
-            self.conn = db_conn
-        else:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    def __init__(self, db_conn=None):
+        self.db = get_db()
+        self.conn = db_conn if db_conn is not None else self.db.conn
         self._init_table()
 
     def _init_table(self):
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS code_symbols (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_path TEXT,
-                file_path TEXT,
-                symbol_name TEXT,
-                symbol_type TEXT,
-                line_number INTEGER,
-                snippet TEXT
-            )
-        """)
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_symbol_name ON code_symbols(symbol_name)")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_symbol_file ON code_symbols(file_path)")
-        self.conn.commit()
+        with self.db.transaction():
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS code_symbols (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_path TEXT,
+                    file_path TEXT,
+                    symbol_name TEXT,
+                    symbol_type TEXT,
+                    line_number INTEGER,
+                    snippet TEXT
+                )
+            """)
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_symbol_name ON code_symbols(symbol_name)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_symbol_file ON code_symbols(file_path)")
 
     def index_project(self, project_path: str) -> dict:
-        """扫描项目目录, 建立符号索引"""
+        """扫描项目目录, 建立符号索引 (整批一个事务, 避免逐条 commit)"""
         project_path = os.path.abspath(project_path)
-        # 清除该项目的旧索引
-        self.conn.execute("DELETE FROM code_symbols WHERE project_path = ?", (project_path,))
+        rows = []
 
-        count = 0
         for root, dirs, files in os.walk(project_path):
             # 跳过不需要的目录
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
@@ -89,7 +81,7 @@ class CodeIndex:
                     continue
 
                 fpath = os.path.join(root, fname)
-                rel_path = os.path.relpath(fpath, project_path)
+                abs_path = os.path.abspath(fpath)
                 patterns = LANG_PATTERNS[ext]
 
                 try:
@@ -98,38 +90,40 @@ class CodeIndex:
                             for pattern, stype in patterns:
                                 m = re.match(pattern, line.strip())
                                 if m:
-                                    name = m.group(1)
-                                    snippet = line.strip()[:120]
-                                    self.conn.execute(
-                                        "INSERT INTO code_symbols (project_path, file_path, symbol_name, symbol_type, line_number, snippet) VALUES (?, ?, ?, ?, ?, ?)",
-                                        (project_path, rel_path, name, stype, lineno, snippet),
-                                    )
-                                    count += 1
+                                    rows.append((project_path, abs_path, m.group(1),
+                                                 stype, lineno, line.strip()[:120]))
                                     break
                 except (IOError, OSError):
                     continue
 
-        self.conn.commit()
-        return {"project": project_path, "symbols": count}
+        with self.db.transaction():
+            self.conn.execute(
+                "DELETE FROM code_symbols WHERE project_path = ?", (project_path,))
+            self.conn.executemany(
+                "INSERT INTO code_symbols (project_path, file_path, symbol_name, symbol_type, line_number, snippet) VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return {"project": project_path, "symbols": len(rows)}
 
     def search(self, query: str, project_path: str = None, limit: int = 20) -> list[dict]:
         """按符号名搜索, 支持模糊匹配"""
         if project_path:
-            rows = self.conn.execute(
+            prefix = os.path.abspath(project_path).rstrip("/\\") + os.sep
+            rows = self.db.query(
                 """SELECT file_path, symbol_name, symbol_type, line_number, snippet
                    FROM code_symbols
-                   WHERE project_path = ? AND symbol_name LIKE ?
+                   WHERE (file_path LIKE ? OR project_path = ?) AND symbol_name LIKE ?
                    ORDER BY symbol_type, symbol_name LIMIT ?""",
-                (os.path.abspath(project_path), f"%{query}%", limit),
-            ).fetchall()
+                (prefix + "%", os.path.abspath(project_path), f"%{query}%", limit),
+            )
         else:
-            rows = self.conn.execute(
+            rows = self.db.query(
                 """SELECT file_path, symbol_name, symbol_type, line_number, snippet
                    FROM code_symbols
                    WHERE symbol_name LIKE ?
                    ORDER BY symbol_type, symbol_name LIMIT ?""",
                 (f"%{query}%", limit),
-            ).fetchall()
+            )
 
         return [
             {"file": r[0], "name": r[1], "type": r[2],
@@ -140,23 +134,25 @@ class CodeIndex:
     def list_symbols(self, file_path: str = None, project_path: str = None, limit: int = 50) -> list[dict]:
         """列出所有符号, 可按文件过滤"""
         if file_path:
-            rows = self.conn.execute(
+            rows = self.db.query(
                 """SELECT file_path, symbol_name, symbol_type, line_number, snippet
                    FROM code_symbols WHERE file_path LIKE ? ORDER BY line_number LIMIT ?""",
                 (f"%{file_path}%", limit),
-            ).fetchall()
+            )
         elif project_path:
-            rows = self.conn.execute(
+            prefix = os.path.abspath(project_path).rstrip("/\\") + os.sep
+            rows = self.db.query(
                 """SELECT file_path, symbol_name, symbol_type, line_number, snippet
-                   FROM code_symbols WHERE project_path = ? ORDER BY file_path, line_number LIMIT ?""",
-                (os.path.abspath(project_path), limit),
-            ).fetchall()
+                   FROM code_symbols WHERE file_path LIKE ? OR project_path = ?
+                   ORDER BY file_path, line_number LIMIT ?""",
+                (prefix + "%", os.path.abspath(project_path), limit),
+            )
         else:
-            rows = self.conn.execute(
+            rows = self.db.query(
                 """SELECT file_path, symbol_name, symbol_type, line_number, snippet
                    FROM code_symbols ORDER BY file_path, line_number LIMIT ?""",
                 (limit,),
-            ).fetchall()
+            )
 
         return [
             {"file": r[0], "name": r[1], "type": r[2],
@@ -164,11 +160,47 @@ class CodeIndex:
             for r in rows
         ]
 
+    def index_file(self, file_path: str) -> dict:
+        """单文件增量索引: 删除该文件旧符号 → 重新提取插入 (file_write/code_edit 后调用)
+
+        file_path 存绝对路径, 与 index_project 保持一致, 搜索时按目录前缀匹配。
+        非支持语言的文件直接返回 (不做任何操作)。
+        """
+        abs_path = os.path.abspath(file_path)
+        ext = os.path.splitext(abs_path)[1].lower()
+        if ext not in LANG_PATTERNS:
+            return {"file": abs_path, "symbols": 0, "skipped": True}
+        if not os.path.isfile(abs_path):
+            return {"file": abs_path, "symbols": 0, "error": "文件不存在"}
+
+        patterns = LANG_PATTERNS[ext]
+        rows = []
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                for lineno, line in enumerate(f, 1):
+                    for pattern, stype in patterns:
+                        m = re.match(pattern, line.strip())
+                        if m:
+                            rows.append((os.path.dirname(abs_path), abs_path,
+                                         m.group(1), stype, lineno, line.strip()[:120]))
+                            break
+        except (IOError, OSError) as e:
+            return {"file": abs_path, "symbols": 0, "error": str(e)}
+
+        with self.db.transaction():
+            # 删除该文件的旧符号 (绝对路径精确匹配)
+            self.conn.execute("DELETE FROM code_symbols WHERE file_path = ?", (abs_path,))
+            self.conn.executemany(
+                "INSERT INTO code_symbols (project_path, file_path, symbol_name, symbol_type, line_number, snippet) VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return {"file": abs_path, "symbols": len(rows)}
+
     def stats(self) -> dict:
-        total = self.conn.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
-        files = self.conn.execute("SELECT COUNT(DISTINCT file_path) FROM code_symbols").fetchone()[0]
-        by_type = self.conn.execute(
+        total = self.db.query_one("SELECT COUNT(*) FROM code_symbols")[0]
+        files = self.db.query_one("SELECT COUNT(DISTINCT file_path) FROM code_symbols")[0]
+        by_type_rows = self.db.query(
             "SELECT symbol_type, COUNT(*) FROM code_symbols GROUP BY symbol_type"
-        ).fetchall()
+        )
         return {"total_symbols": total, "files_indexed": files,
-                "by_type": {r[0]: r[1] for r in by_type}}
+                "by_type": {r[0]: r[1] for r in by_type_rows}}

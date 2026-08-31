@@ -4,14 +4,19 @@
   1. token 数来自 API 返回的 usage 字段 (真实)
   2. 单价从 .env 读取 (可配置)
   3. 支持账单校准: 输入实际花费, 反算真实单价并保存
+
+性能策略: record 高频调用, 采用防抖落盘 (1s 内的多条记录合并写一次),
+进程退出时 atexit 兜底 flush, 查询始终走内存不受影响。
 """
+import atexit
 import json
+import threading
 import time
-from pathlib import Path
 from config import DATA_DIR, COST_CONFIG
 
 COST_FILE = DATA_DIR / "cost_log.json"
 CALIB_FILE = DATA_DIR / "cost_calibration.json"
+_SAVE_DEBOUNCE_SECONDS = 1.0
 
 
 class CostTracker:
@@ -20,18 +25,40 @@ class CostTracker:
     def __init__(self):
         self.records: list[dict] = []
         self.calibrated_prices: dict[str, dict] = {}  # model -> {input, output}
+        self._lock = threading.RLock()
+        self._dirty = False
+        self._save_timer: threading.Timer | None = None
         self._load()
         self._load_calibration()
+        atexit.register(self.flush)
 
     def _load(self):
         if COST_FILE.exists():
             self.records = json.loads(COST_FILE.read_text(encoding="utf-8"))
 
-    def _save(self):
-        COST_FILE.write_text(
-            json.dumps(self.records, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+    def _schedule_save(self):
+        with self._lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+            self._save_timer = threading.Timer(
+                _SAVE_DEBOUNCE_SECONDS, self.flush
+            )
+            self._save_timer.daemon = True
+            self._save_timer.start()
+
+    def flush(self):
+        """立即落盘 (Timer 回调 / atexit / calibrate 后手动调用)"""
+        with self._lock:
+            if not self._dirty:
+                return
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+            COST_FILE.write_text(
+                json.dumps(self.records, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self._dirty = False
 
     def _load_calibration(self):
         if CALIB_FILE.exists():
@@ -64,8 +91,10 @@ class CostTracker:
             "cost_yuan": round(cost, 4),
             "task": task[:40],
         }
-        self.records.append(entry)
-        self._save()
+        with self._lock:
+            self.records.append(entry)
+            self._dirty = True
+        self._schedule_save()
         return entry
 
     def calibrate(self, model: str, actual_cost_yuan: float,
@@ -98,24 +127,26 @@ class CostTracker:
         input_price = round(avg_price * ratio * 2, 4)
         output_price = round(avg_price * (1 - ratio) * 2, 4)
 
-        self.calibrated_prices[model] = {
-            "input": input_price,
-            "output": output_price,
-            "calibrated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "based_on_records": len(records),
-            "actual_cost": actual_cost_yuan,
-        }
-        self._save_calibration()
+        with self._lock:
+            self.calibrated_prices[model] = {
+                "input": input_price,
+                "output": output_price,
+                "calibrated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "based_on_records": len(records),
+                "actual_cost": actual_cost_yuan,
+            }
+            self._save_calibration()
 
-        # 用新单价重算历史记录
-        for r in self.records:
-            if r["model"] == model:
-                p = self.calibrated_prices[model]
-                r["cost_yuan"] = round(
-                    r["input_tokens"] / 1_000_000 * p["input"]
-                    + r["output_tokens"] / 1_000_000 * p["output"], 4
-                )
-        self._save()
+            # 用新单价重算历史记录
+            for r in self.records:
+                if r["model"] == model:
+                    p = self.calibrated_prices[model]
+                    r["cost_yuan"] = round(
+                        r["input_tokens"] / 1_000_000 * p["input"]
+                        + r["output_tokens"] / 1_000_000 * p["output"], 4
+                    )
+            self._dirty = True
+            self.flush()
 
         return {
             "ok": True,
@@ -129,7 +160,9 @@ class CostTracker:
 
     def total_today(self) -> dict:
         today = time.strftime("%Y-%m-%d")
-        today_records = [r for r in self.records if r["time"].startswith(today)]
+        with self._lock:
+            today_records = [r for r in self.records
+                             if r["time"].startswith(today)]
         total_cost = sum(r["cost_yuan"] for r in today_records)
         total_input = sum(r["input_tokens"] for r in today_records)
         total_output = sum(r["output_tokens"] for r in today_records)
@@ -157,7 +190,8 @@ class CostTracker:
         }
 
     def history(self, n: int = 20) -> list[dict]:
-        return self.records[-n:]
+        with self._lock:
+            return self.records[-n:]
 
     def get_prices(self) -> dict:
         """获取当前生效的单价 (含校准)"""

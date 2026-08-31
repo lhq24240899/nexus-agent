@@ -419,6 +419,13 @@
     <div class="chat-input">
       <div class="input-controls">
         <div class="secretary-toggle">
+          Mode:
+          <select id="agent-mode" onchange="switchAgentMode(this.value)">
+            <option value="work">Work (coding, full tools)</option>
+            <option value="chat">Chat (light, cheap)</option>
+          </select>
+        </div>
+        <div class="secretary-toggle">
           Secretary:
           <select id="secretary-mode">
             <option value="auto">Auto (skip simple)</option>
@@ -923,7 +930,27 @@ function addToolStatus(toolName, parentDiv) {
 // ============ Send消息 (流式) ============
 let currentAbortController = null;
 
-async function sendMessage() {
+async function switchAgentMode(mode) {
+      try {
+        await fetch('/api/mode', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: mode}),
+        });
+      } catch (e) { console.warn('mode switch failed', e); }
+    }
+
+    // 页面加载时同步后端当前模式
+    (async function initAgentMode() {
+      try {
+        const r = await fetch('/api/mode');
+        const d = await r.json();
+        const sel = document.getElementById('agent-mode');
+        if (sel && d.mode) sel.value = d.mode;
+      } catch (e) {}
+    })();
+
+    async function sendMessage() {
   const input = document.getElementById('user-input');
   const btn = document.getElementById('send-btn');
   const msg = input.value.trim();
@@ -939,6 +966,7 @@ async function sendMessage() {
     addMessage('user', msg);
 
     const secMode = document.getElementById('secretary-mode').value;
+    const agentMode = document.getElementById('agent-mode').value;
     const respDiv = document.createElement('div');
     respDiv.className = 'msg nexus';
     respDiv.innerHTML = '<div class="bubble loading">Nexus thinking...</div>';
@@ -957,7 +985,7 @@ async function sendMessage() {
     const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg, use_secretary: secMode}),
+      body: JSON.stringify({message: msg, use_secretary: secMode, mode: agentMode}),
       signal: currentAbortController.signal,
     });
 

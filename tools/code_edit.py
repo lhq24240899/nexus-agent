@@ -63,6 +63,9 @@ def _make_diff(old: str, new: str, filename: str) -> str:
 
 class CodeEditTool(BaseTool):
     name = "code_edit"
+
+    def __init__(self, code_index=None):
+        self.code_index = code_index
     description = (
         "精确编辑代码文件 (类似 Codex 的 search/replace)。支持多种编辑模式: "
         "search_replace(搜索替换, 搜索文本必须唯一)、insert_after(在指定文本后插入)、"
@@ -243,6 +246,10 @@ class CodeEditTool(BaseTool):
             _write_file(path, new_content)
         except Exception as e:
             return f"写入失败: {e}"
+
+        # 编辑后自动增量索引
+        if self.code_index:
+            self.code_index.index_file(str(path))
 
         diff = _make_diff(original, new_content, path.name)
         diff_preview = diff[:2000] if len(diff) > 2000 else diff

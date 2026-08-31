@@ -62,7 +62,10 @@ class FileReadTool(BaseTool):
 
 class FileWriteTool(BaseTool):
     name = "file_write"
-    description = "写入内容到本地文件。如果文件存在会覆盖。"
+    description = "写入内容到本地文件。如果文件存在会覆盖。写入后自动更新代码符号索引。"
+
+    def __init__(self, code_index=None):
+        self.code_index = code_index
     params_schema = {
         "type": "object",
         "properties": {
@@ -81,6 +84,9 @@ class FileWriteTool(BaseTool):
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
+            # 写入后自动增量索引 (仅支持的语言文件)
+            if self.code_index:
+                self.code_index.index_file(str(p))
             return f"已写入 {len(content)} 字符到 {path}"
         except Exception as e:
             return f"写入失败: {e}"
