@@ -266,6 +266,38 @@
     background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
     padding: 3px 8px; border-radius: 4px; font-size: 12px;
   }
+  .mode-segmented {
+    display: flex; background: #0d1117; border: 1px solid #30363d;
+    border-radius: 6px; overflow: hidden;
+  }
+  .mode-segmented button {
+    background: transparent; border: none; color: #8b949e;
+    padding: 4px 14px; font-size: 12px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mode-segmented button:hover { color: #c9d1d9; }
+  .mode-segmented button.active {
+    background: #1f6feb; color: #fff; font-weight: 500;
+  }
+  .sec-toggle-wrap {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e;
+  }
+  .sec-toggle {
+    position: relative; width: 36px; height: 20px;
+    background: #30363d; border-radius: 10px; cursor: pointer;
+    transition: background 0.2s; border: none; padding: 0;
+  }
+  .sec-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; background: #8b949e; border-radius: 50%;
+    transition: all 0.2s;
+  }
+  .sec-toggle.on {
+    background: #1f6feb;
+  }
+  .sec-toggle.on::after {
+    left: 18px; background: #fff;
+  }
   .input-row { display: flex; gap: 8px; }
   .chat-input textarea {
     flex: 1; background: #0d1117; border: 1px solid #30363d;
@@ -418,20 +450,13 @@
     </div>
     <div class="chat-input">
       <div class="input-controls">
-        <div class="secretary-toggle">
-          Mode:
-          <select id="agent-mode" onchange="switchAgentMode(this.value)">
-            <option value="work">Work (coding, full tools)</option>
-            <option value="chat">Chat (light, cheap)</option>
-          </select>
+        <div class="mode-segmented" id="agent-mode">
+          <button class="active" data-mode="work" onclick="switchAgentMode('work')">Work</button>
+          <button data-mode="chat" onclick="switchAgentMode('chat')">Chat</button>
         </div>
-        <div class="secretary-toggle">
-          Secretary:
-          <select id="secretary-mode">
-            <option value="auto">Auto (skip simple)</option>
-            <option value="on">Always on</option>
-            <option value="off">Always off (fastest)</option>
-          </select>
+        <div class="sec-toggle-wrap">
+          <span>Secretary</span>
+          <button class="sec-toggle on" id="secretary-toggle" onclick="toggleSecretary()"></button>
         </div>
       </div>
       <div class="input-row">
@@ -931,10 +956,15 @@ function addToolStatus(toolName, parentDiv) {
 let currentAbortController = null;
 
 async function switchAgentMode(mode) {
-      try {
-        await fetch('/api/mode', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+  document.querySelectorAll('#agent-mode button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+}
+
+function toggleSecretary() {
+  const btn = document.getElementById('secretary-toggle');
+  btn.classList.toggle('on');
+},
           body: JSON.stringify({mode: mode}),
         });
       } catch (e) { console.warn('mode switch failed', e); }
@@ -965,8 +995,8 @@ async function switchAgentMode(mode) {
 
     addMessage('user', msg);
 
-    const secMode = document.getElementById('secretary-mode').value;
-    const agentMode = document.getElementById('agent-mode').value;
+    const secMode = document.getElementById('secretary-toggle').classList.contains('on') ? 'auto' : 'off';
+    const agentMode = document.querySelector('#agent-mode button.active')?.dataset.mode || 'work';
     const respDiv = document.createElement('div');
     respDiv.className = 'msg nexus';
     respDiv.innerHTML = '<div class="bubble loading">Nexus thinking...</div>';
