@@ -33,7 +33,11 @@ def create_app() -> Flask:
 
     @app.after_request
     def after_request(resp):
-        return _add_cors(resp)
+        resp = _add_cors(resp)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
 
     @app.route("/")
     def index():
@@ -53,6 +57,19 @@ def create_app() -> Flask:
         record = agent.run(task, use_secretary=use_secretary, mode=mode)
         return jsonify(record)
 
+    def _safe_generate(gen):
+        """包装 SSE 生成器, 确保任何异常都不会导致 Flask 进程崩溃"""
+        try:
+            yield from gen
+        except GeneratorExit:
+            raise  # 客户端断开, 正常退出
+        except Exception as e:
+            import traceback
+            import json as _json
+            traceback.print_exc()
+            err = _json.dumps({"type": "error", "message": "Server error: " + str(e)}, ensure_ascii=False)
+            yield "data: " + err + "\n\n"
+
     @app.route("/api/chat/stream", methods=["POST"])
     def chat_stream():
         """SSE 流式对话"""
@@ -66,61 +83,61 @@ def create_app() -> Flask:
             return jsonify({"error": "未配置 API Key"}), 400
 
         # 断线重连: 浏览器自动带 Last-Event-ID, 跳过已发送的事件
-            last_id = request.headers.get("Last-Event-ID", "")
-            skip_count = int(last_id) if last_id.isdigit() else 0
+        last_id = request.headers.get("Last-Event-ID", "")
+        skip_count = int(last_id) if last_id.isdigit() else 0
 
-            def generate():
-                q = queue.Queue()
-                stop_event = threading.Event()
-                event_id = 0
+        def generate():
+            q = queue.Queue()
+            stop_event = threading.Event()
+            event_id = 0
 
-                def agent_worker():
-                    try:
-                        for event in agent.run_stream(task, use_secretary=use_secretary, mode=mode):
-                            q.put(("data", event))
-                        q.put(("done", None))
-                    except Exception as e:
-                        q.put(("error", str(e)))
+            def agent_worker():
+                try:
+                    for event in agent.run_stream(task, use_secretary=use_secretary, mode=mode):
+                        q.put(("data", event))
+                    q.put(("done", None))
+                except Exception as e:
+                    q.put(("error", str(e)))
 
-                def heartbeat_worker():
-                    while not stop_event.is_set():
-                        stop_event.wait(10)
-                        if not stop_event.is_set():
-                            q.put(("heartbeat", None))
+            def heartbeat_worker():
+                while not stop_event.is_set():
+                    stop_event.wait(10)
+                    if not stop_event.is_set():
+                        q.put(("heartbeat", None))
 
-                threading.Thread(target=agent_worker, daemon=True).start()
-                threading.Thread(target=heartbeat_worker, daemon=True).start()
+            threading.Thread(target=agent_worker, daemon=True).start()
+            threading.Thread(target=heartbeat_worker, daemon=True).start()
 
-                while True:
-                    try:
-                        item_type, item_data = q.get(timeout=120)
-                    except queue.Empty:
-                        yield f"id: {event_id}\ndata: {json.dumps({'type': 'error', 'message': 'stream timeout'}, ensure_ascii=False)}\n\n"
+            while True:
+                try:
+                    item_type, item_data = q.get(timeout=120)
+                except queue.Empty:
+                    yield f"id: {event_id}\ndata: {json.dumps({'type': 'error', 'message': 'stream timeout'}, ensure_ascii=False)}\n\n"
+                    break
+                if item_type == "heartbeat":
+                    yield ": heartbeat\n\n"
+                    continue
+                # data/error/done 都分配事件ID
+                event_id += 1
+                # 断线重连: 跳过已经发送过的事件
+                if event_id <= skip_count:
+                    if item_type == "done":
                         break
-                    if item_type == "heartbeat":
-                        yield ": heartbeat\n\n"
-                        continue
-                    # data/error/done 都分配事件ID
-                    event_id += 1
-                    # 断线重连: 跳过已经发送过的事件
-                    if event_id <= skip_count:
-                        if item_type == "done":
-                            break
-                        continue
-                    if item_type == "data":
-                        yield f"id: {event_id}\ndata: {json.dumps(item_data, ensure_ascii=False)}\n\n"
-                    elif item_type == "error":
-                        yield f"id: {event_id}\ndata: {json.dumps({'type': 'error', 'message': item_data}, ensure_ascii=False)}\n\n"
-                        break
-                    elif item_type == "done":
-                        yield f"id: {event_id}\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-                        break
-                stop_event.set()
+                    continue
+                if item_type == "data":
+                    yield f"id: {event_id}\ndata: {json.dumps(item_data, ensure_ascii=False)}\n\n"
+                elif item_type == "error":
+                    yield f"id: {event_id}\ndata: {json.dumps({'type': 'error', 'message': item_data}, ensure_ascii=False)}\n\n"
+                    break
+                elif item_type == "done":
+                    yield f"id: {event_id}\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                    break
+            stop_event.set()
 
-            resp = Response(generate(), mimetype="text/event-stream")
-            resp.headers["Cache-Control"] = "no-cache"
-            resp.headers["X-Accel-Buffering"] = "no"  # 禁用Nginx缓冲
-            return resp
+        resp = Response(_safe_generate(generate()), mimetype="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"  # 禁用Nginx缓冲
+        return resp
 
     @app.route("/api/history/clear", methods=["POST"])
     def clear_history():
@@ -129,10 +146,15 @@ def create_app() -> Flask:
 
     @app.route("/api/history")
     def get_history():
-        """分页获取对话历史: offset=0 表示最近的消息, 越大越老"""
+        """分页获取对话历史: offset=0 表示最近的消息, 越大越老. mode 参数可指定模式"""
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", 20))
-        all_msgs = agent.conversation
+        mode = request.args.get("mode", "")
+        # 只读返回指定模式的历史, 不改变后端当前模式 (模式切换走 /api/mode)
+        if mode in ("work", "chat", "brainstorm"):
+            all_msgs = agent.conversations.get(mode, [])
+        else:
+            all_msgs = agent.conversation
         # 从后往前取: 最近的在最后
         end = len(all_msgs) - offset
         start = max(0, end - limit)
@@ -143,6 +165,7 @@ def create_app() -> Flask:
             "messages": batch,
             "has_more": start > 0,
             "total": len(all_msgs),
+            "mode": mode or agent.get_mode(),
         })
 
     # ============ 日志 ============
@@ -175,18 +198,113 @@ def create_app() -> Flask:
     def stats():
         return jsonify(agent.stats())
 
+    # ============ 错误自动诊断 ============
+    @app.route("/api/diagnose", methods=["POST"])
+    def diagnose():
+        """出错时自动检查相关模块状态, 返回每个模块的健康度和建议"""
+        data = request.get_json(silent=True) or {}
+        error_msg = data.get("msg", "")
+        checks = {}
+
+        # 1. LLM 连接
+        try:
+            from config import DECISION_CONFIG
+            checks["LLM API"] = {
+                "ok": bool(DECISION_CONFIG.get("api_key")),
+                "message": f"base_url={DECISION_CONFIG.get('base_url','?')[:40]}, model={DECISION_CONFIG.get('model','?')}"
+            }
+        except Exception as e:
+            checks["LLM API"] = {"ok": False, "message": str(e)}
+
+        # 2. Embedding
+        try:
+            from config import EMBEDDING_CONFIG
+            checks["Embedding"] = {
+                "ok": bool(EMBEDDING_CONFIG.get("api_key")),
+                "message": f"model={EMBEDDING_CONFIG.get('model','?')}"
+            }
+        except Exception as e:
+            checks["Embedding"] = {"ok": False, "message": str(e)}
+
+        # 3. 搜索 API
+        try:
+            from config import SEARCH_CONFIG
+            active = [k for k in ["tavily_api_key","serper_api_key","baidu_api_key"] if SEARCH_CONFIG.get(k)]
+            checks["Search API"] = {
+                "ok": len(active) > 0,
+                "message": f"可用: {', '.join(active) if active else '无'}"
+            }
+        except Exception as e:
+            checks["Search API"] = {"ok": False, "message": str(e)}
+
+        # 4. Linux/WSL
+        try:
+            linux_ok = agent.linux and agent.linux.available if hasattr(agent, 'linux') else False
+            checks["Linux/WSL"] = {
+                "ok": linux_ok,
+                "message": "WSL2 Ubuntu 已连接" if linux_ok else "未连接或不可用"
+            }
+        except Exception as e:
+            checks["Linux/WSL"] = {"ok": False, "message": str(e)}
+
+        # 5. 工具系统
+        try:
+            tool_count = len(agent.decision.tool_manager.tools) if hasattr(agent, 'decision') and agent.decision.tool_manager else 0
+            checks["Tool System"] = {
+                "ok": tool_count > 0,
+                "message": f"已加载 {tool_count} 个工具"
+            }
+        except Exception as e:
+            checks["Tool System"] = {"ok": False, "message": str(e)}
+
+        # 6. 向量库
+        try:
+            vec_ok = hasattr(agent, 'secretary') and agent.secretary and hasattr(agent.secretary, 'vector_store')
+            checks["Vector Store"] = {
+                "ok": vec_ok,
+                "message": "向量库就绪" if vec_ok else "未初始化"
+            }
+        except Exception as e:
+            checks["Vector Store"] = {"ok": False, "message": str(e)}
+
+        # 7. 对话历史
+        try:
+            hist_count = len(agent.conversation)
+            checks["Conversation"] = {
+                "ok": True,
+                "message": f"当前模式 {agent.current_mode}, {hist_count} 条历史"
+            }
+        except Exception as e:
+            checks["Conversation"] = {"ok": False, "message": str(e)}
+
+        # 生成建议
+        failed = [k for k, v in checks.items() if not v["ok"]]
+        suggestion = ""
+        if "LLM API" in failed:
+            suggestion += "检查 .env 中的 API key 和 base_url 是否正确。"
+        if "Linux/WSL" in failed:
+            suggestion += "确认 WSL2 Ubuntu 已启动 (wsl -l -v)。"
+        if "Search API" in failed:
+            suggestion += "搜索工具不可用, 可在 .env 配置 TAVILY/SERPER/BAIDU key。"
+        if not suggestion and failed:
+            suggestion = f"以下模块异常: {', '.join(failed)}, 请检查相关配置。"
+        if not failed:
+            suggestion = "所有模块正常, 错误可能是瞬时网络问题或输入格式问题。"
+
+        return jsonify({"checks": checks, "suggestion": suggestion, "error": error_msg})
+
     # ============ 模式切换 ============
     @app.route("/api/mode", methods=["GET"])
     def get_mode():
         return jsonify({"mode": agent.get_mode(),
-                        "available": ["work", "chat"]})
+                        "available": ["work", "chat", "brainstorm"]})
 
     @app.route("/api/mode", methods=["POST"])
     def set_mode():
         data = request.get_json() or {}
         mode = data.get("mode", "work")
         actual = agent.set_mode(mode)
-        return jsonify({"ok": True, "mode": actual})
+        return jsonify({"ok": True, "mode": actual, "history_count": len(agent.conversation)})
 
     @app.route("/api/task-stats")
     def task_stats():
@@ -196,15 +314,15 @@ def create_app() -> Flask:
     @app.route("/api/libraries")
     def libraries():
         libs = agent.secretary.libs
+        def _fmt(i):
+            meta = i.get("meta", {}) or {}
+            return {"id": i["id"], "content": i["content"],
+                    "time": i["timestamp"], "mode": meta.get("mode", "")}
         return jsonify({
-            "tools": [{"id": i["id"], "content": i["content"],
-                       "time": i["timestamp"]} for i in libs.tools.all()],
-            "knowledge": [{"id": i["id"], "content": i["content"],
-                           "time": i["timestamp"]} for i in libs.knowledge.all()],
-            "experience": [{"id": i["id"], "content": i["content"],
-                            "time": i["timestamp"]} for i in libs.experience.all()],
-            "memory": [{"id": i["id"], "content": i["content"],
-                        "time": i["timestamp"]} for i in libs.memory.all()],
+            "tools": [_fmt(i) for i in libs.tools.all()],
+            "knowledge": [_fmt(i) for i in libs.knowledge.all()],
+            "experience": [_fmt(i) for i in libs.experience.all()],
+            "memory": [_fmt(i) for i in libs.memory.all()],
         })
 
     @app.route("/api/libraries/add", methods=["POST"])
@@ -373,6 +491,12 @@ def create_app() -> Flask:
     return app
 
 
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(e):
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 def main():
     app = create_app()
     print(f"\n{'='*50}")
@@ -382,7 +506,7 @@ def main():
     print(f"  API:    http://{WEB_CONFIG['host']}:{WEB_CONFIG['port']}/api/v1/ask")
     print(f"{'='*50}\n")
     app.run(host=WEB_CONFIG["host"], port=WEB_CONFIG["port"],
-            debug=WEB_CONFIG["debug"])
+            debug=WEB_CONFIG["debug"], threaded=True)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,21 @@ class SecretaryCore:
         logger.log("secretary", "向量检索完成",
                    f"命中 {total_found} 条, 模式: {self.libs.vector_store.mode}")
 
+        # 硬规则: 检测到修复/调试/顽固问题类任务, 自动注入自我验证工作流
+        debug_keywords = ['修复', '报错', '错误', 'bug', '没修好', '还是不行', '不生效',
+                          '没变化', '反复修改', '调试', 'debug', '修不好', '异常']
+        if any(kw in task.lower() for kw in debug_keywords):
+            raw_context += (
+                "\n\n【秘书硬规则 —— 自我验证工作流】"
+                "\n检测到这是一个修复/调试类任务, 决策核心必须遵守:"
+                "\n1. 改完代码自己启动验证, 不要让用户当测试员"
+                "\n2. 同一问题修改2次未生效, 停止猜测, 用curl/日志验证假设, 分层排查根因"
+                "\n3. UI不生效优先怀疑缓存(WebView2/浏览器), 用时间戳URL解决"
+                "\n4. 检查运行时报错(函数是否存在/API可达), 验证关联功能"
+                "\n5. 用完清理临时文件, git diff确认改动"
+            )
+            logger.log("secretary", "硬规则触发", "修复类任务, 已注入自我验证工作流")
+
         # Step 2: LLM 筛选整理 (含历史对话)
         history_section = f"\n\n【历史对话】\n{history_text}" if history_text else ""
         resp = self.client.chat.completions.create(
@@ -176,7 +191,7 @@ class SecretaryCore:
         result = list(selected)[:12]
         return result if result else None
 
-    def reflect(self, task: str, result: str, context: str) -> str:
+    def reflect(self, task: str, result: str, context: str, mode: str = "work") -> str:
         """
         经验反思: 任务完成后复盘, 提炼可复用经验
         """
@@ -209,6 +224,7 @@ class SecretaryCore:
                 self.libs.experience.add(
                     f"[反思] 任务: {task[:60]}\n经验: {reflection[:300]}",
                     meta={"type": "reflection"},
+                    mode=mode,
                 )
                 logger.log("secretary", "反思完成", "已存入经验库")
             else:
@@ -423,7 +439,7 @@ class SecretaryCore:
         return {"ok": True, "old": before, "new": len(kept), "removed": removed}
 
     def record_result(self, task: str, result: str, tools_used: list = None,
-                      success: bool = True):
+                      success: bool = True, mode: str = "work"):
         """任务完成后沉淀到经验库 (结构化: 成功/失败/工具/可复用模式)"""
         tools_str = ", ".join(tools_used) if tools_used else "无"
         status = "成功" if success else "失败"
@@ -431,6 +447,7 @@ class SecretaryCore:
             f"[{status}] 任务: {task[:80]}\n"
             f"使用工具: {tools_str}\n"
             f"结果摘要: {result[:200]}",
+            mode=mode,
             meta={"type": "task_result", "success": success,
                   "tools_used": tools_used or []},
         )

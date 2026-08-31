@@ -60,6 +60,7 @@ WEB_CONFIG = {
 MODEL_ROUTING = {
     "work": os.getenv("WORK_MODEL", DECISION_CONFIG["model"]),
     "chat": os.getenv("CHAT_MODEL", "deepseek-v4-flash"),
+    "brainstorm": os.getenv("BRAINSTORM_MODEL", "deepseek-v4-flash"),
 }
 
 # ============ 搜索 API 配置 ============

@@ -92,17 +92,26 @@ class DualCoreAgent:
                    f"{len(self.tool_manager.list_tools())} 个工具: "
                    + ", ".join(t["name"] for t in self.tool_manager.list_tools()))
         self.task_history: list[dict] = []
-        self.conversation: list[dict] = []
-        self._load_conversation()
-        # 会话级模式: work=完整编码双核, chat=轻量聊天 (省钱省 token)
+        # 会话级模式 (必须在 _load_conversation 之前初始化)
         self.current_mode = "work"
+        # 按模式分开存储对话历史: work(编码) / chat(聊天) / brainstorm(头脑风暴)
+        self.conversations: dict[str, list[dict]] = {"work": [], "chat": [], "brainstorm": []}
+        self.conversation: list[dict] = []  # 当前模式的对话引用
+        self._load_conversation()
         self._chat_tools = ["web_search", "current_time"]
+        self._brainstorm_tools = ["web_search", "current_time"]  # 头脑风暴也用轻量工具
 
     def set_mode(self, mode: str) -> str:
-        """切换会话模式并立即应用到决策核心, 返回实际生效的模式"""
-        self.current_mode = mode if mode in ("work", "chat") else "work"
-        self._apply_mode(self.current_mode)
-        logger.log("system", "模式切换", f"当前模式: {self.current_mode}")
+        """切换会话模式并立即应用到决策核心, 同时切换对话历史, 返回实际生效的模式"""
+        new_mode = mode if mode in ("work", "chat", "brainstorm") else "work"
+        if new_mode != self.current_mode:
+            # 保存当前模式的对话
+            self.conversations[self.current_mode] = self.conversation
+            self.current_mode = new_mode
+            # 加载新模式的对话
+            self.conversation = self.conversations.get(new_mode, [])
+            self._apply_mode(new_mode)
+            logger.log("system", "模式切换", f"当前模式: {new_mode}, 历史消息: {len(self.conversation)} 条")
         return self.current_mode
 
     def get_mode(self) -> str:
@@ -110,10 +119,13 @@ class DualCoreAgent:
 
     def _apply_mode(self, mode: str | None) -> str:
         """任务前应用模式: 切换决策核心提示词与模型, 返回实际模式"""
-        actual = mode if mode in ("work", "chat") else self.current_mode
+        actual = mode if mode in ("work", "chat", "brainstorm") else self.current_mode
         if actual == "chat":
             self.decision.set_mode("chat")
             self.decision.override_model = MODEL_ROUTING["chat"]
+        elif actual == "brainstorm":
+            self.decision.set_mode("brainstorm")
+            self.decision.override_model = MODEL_ROUTING.get("brainstorm", MODEL_ROUTING["chat"])
         else:
             self.decision.set_mode("work")
             self.decision.override_model = None  # 恢复默认决策模型
@@ -122,27 +134,42 @@ class DualCoreAgent:
     def _load_conversation(self):
         if HISTORY_FILE.exists():
             try:
-                self.conversation = json.loads(
-                    HISTORY_FILE.read_text(encoding="utf-8")
-                )
+                data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+                # 兼容旧格式: 纯列表 → 当作 work 模式
+                if isinstance(data, list):
+                    self.conversations = {"work": data, "chat": [], "brainstorm": []}
+                elif isinstance(data, dict):
+                    self.conversations = {
+                        "work": data.get("work", []),
+                        "chat": data.get("chat", []),
+                        "brainstorm": data.get("brainstorm", []),
+                    }
             except Exception:
-                self.conversation = []
+                self.conversations = {"work": [], "chat": [], "brainstorm": []}
+        self.conversation = self.conversations.get(self.current_mode, [])
 
-    def _save_conversation(self, skip_index: bool = False):
+    def _save_conversation(self, skip_index: bool = False,
+                           mode: str | None = None, conv: list | None = None):
+        # 确保指定模式的对话已同步回 conversations (默认当前模式)
+        mode = mode or self.current_mode
+        conv = conv if conv is not None else self.conversation
+        self.conversations[mode] = conv
         HISTORY_FILE.write_text(
-            json.dumps(self.conversation, ensure_ascii=False, indent=2),
+            json.dumps(self.conversations, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        # 增量索引到向量库 (只索引最后两条; 聊天模式跳过, 避免污染长期记忆)
+        # 增量索引到向量库 (只索引最后两条; 轻量模式跳过, 避免污染长期记忆)
         if not skip_index:
-            self._index_recent_history()
+            self._index_recent_history(conv)
 
-    def _index_recent_history(self):
+    def _index_recent_history(self, conv: list | None = None):
         """把最近的对话增量索引到向量库, 用于长期记忆检索"""
+        if conv is None:
+            conv = self.conversation
         try:
             vs = self.secretary.libs.vector_store
-            for i, msg in enumerate(self.conversation[-2:]):
-                vid = f"conv_{len(self.conversation) - 2 + i}_{msg['role']}"
+            for i, msg in enumerate(conv[-2:]):
+                vid = f"conv_{len(conv) - 2 + i}_{msg['role']}"
                 if vid not in vs.documents:
                     vs.add(vid, f"[{msg['role']}] {msg['content'][:500]}")
         except Exception:
@@ -275,6 +302,7 @@ class DualCoreAgent:
 
     def clear_history(self):
         self.conversation = []
+        self.conversations[self.current_mode] = []
         self._save_conversation()
         logger.log("system", "对话历史已清空", "")
 
@@ -299,11 +327,15 @@ class DualCoreAgent:
     def _run_inner(self, task: str, use_secretary: str,
                    history_text: str, t0: float, mode: str | None = None) -> dict:
         actual_mode = self._apply_mode(mode)
-        is_chat = actual_mode == "chat"
+        self.current_mode = actual_mode
+        self.conversation = self.conversations.get(actual_mode, [])
+        conv = self.conversation  # 本地引用: 任务执行期间即使切换模式也不会串台
+        is_light = actual_mode in ("chat", "brainstorm")
 
-        # 聊天模式: 强制快速通道, 不调秘书, 用精简提示词+白名单工具+轻量模型
-        if is_chat:
-            fast_path = True
+        # 聊天/头脑风暴模式: 强制快速通道, 不调秘书, 用精简提示词+白名单工具+轻量模型
+        if is_light:
+            # chat/brainstorm: 默认快速通道, 但手动强制开秘书(on)时走完整双核
+            fast_path = use_secretary != "on"
         elif use_secretary == "off":
             fast_path = True
         elif use_secretary == "on":
@@ -312,10 +344,10 @@ class DualCoreAgent:
             fast_path = is_simple_question(task)
 
         # 临时目录规则(注入给决策核心, 约束测试文件落点) —— 聊天模式不需要
-        temp_hint = "" if is_chat else temp_workspace.context_hint()
+        temp_hint = "" if is_light else temp_workspace.context_hint()
         # 项目档案 (work 模式自动召回当前目录所属项目的技术画像)
         profile_hint = ""
-        if not is_chat:
+        if not is_light:
             try:
                 _prof = self.project_profile.get_for_directory(os.getcwd())
                 if _prof:
@@ -327,10 +359,10 @@ class DualCoreAgent:
         if fast_path:
             # 快速通道: 跳过秘书检索和反思, 直接回答
             logger.log("system", "快速通道",
-                       f"{'聊天模式' if is_chat else '简单问题'}, 跳过秘书检索")
+                       f"{'轻量模式' if is_light else '简单问题'}, 跳过秘书检索")
             t1 = time.time()
-            context = "(聊天模式: 精简上下文, 仅可查实时信息)" if is_chat else "(快速通道: 未启用秘书检索)"
-            if not is_chat:
+            context = "(轻量模式: 精简上下文, 仅可查实时信息)" if is_light else "(快速通道: 未启用秘书检索)"
+            if not is_light:
                 # 技能匹配 (快速通道也匹配, 编码场景需要工作流引导)
                 skill_ctx, matched_skill = self._get_skill_context_with_name(task)
                 if skill_ctx:
@@ -340,15 +372,15 @@ class DualCoreAgent:
             if profile_hint:
                 context += "\n\n" + profile_hint
             # 聊天模式固定白名单工具; 普通快速通道做关键词筛选
-            if is_chat:
-                allowed_tools = list(self._chat_tools)
+            if is_light:
+                allowed_tools = list(self._chat_tools)  # chat 和 brainstorm 都用轻量工具
             else:
                 allowed_tools = self.secretary._select_tools(task) if self.secretary.tool_manager else None
             t2 = time.time()
             result = self.decision.decide(task, context, history_text,
                                           allowed_tools=allowed_tools)
             t3 = time.time()
-            reflection = "(聊天模式: 未启用反思与沉淀)" if is_chat else "(快速通道: 未启用反思)"
+            reflection = "(轻量模式: 未启用反思与沉淀)" if is_light else "(快速通道: 未启用反思)"
             secretary_time = 0
         else:
             # 完整双核流程
@@ -366,8 +398,8 @@ class DualCoreAgent:
                                           allowed_tools=allowed_tools)
             t3 = time.time()
             tools_used = self.decision.last_tools_used
-            self.secretary.record_result(task, result, tools_used=tools_used)
-            reflection = self.secretary.reflect(task, result, context)
+            self.secretary.record_result(task, result, tools_used=tools_used, mode=actual_mode)
+            reflection = self.secretary.reflect(task, result, context, mode=actual_mode)
             # 技能使用记录 + 自我改进
             if matched_skill:
                 self._record_and_improve_skill(
@@ -380,9 +412,9 @@ class DualCoreAgent:
         t4 = time.time()
 
         # 记录对话历史 (聊天模式不索引长期向量, 避免闲聊污染经验检索)
-        self.conversation.append({"role": "user", "content": task})
-        self.conversation.append({"role": "assistant", "content": result})
-        self._save_conversation(skip_index=is_chat)
+        conv.append({"role": "user", "content": task})
+        conv.append({"role": "assistant", "content": result})
+        self._save_conversation(skip_index=is_light, mode=actual_mode, conv=conv)
 
         record = {
             "task": task,
@@ -391,7 +423,7 @@ class DualCoreAgent:
             "reflection": reflection,
             "fast_path": fast_path,
             "mode": actual_mode,
-            "history_turns": len(self.conversation) // 2,
+            "history_turns": len(conv) // 2,
             "timing": {
                 "secretary_s": secretary_time,
                 "decision_s": round(t3 - t2, 2),
@@ -401,7 +433,7 @@ class DualCoreAgent:
         }
         self.task_history.append(record)
         # 记录任务统计 (聊天模式不沉淀, 避免闲聊稀释编码任务的成功率)
-        if not is_chat:
+        if not is_light:
             # 成功判定以工具真实执行情况为准, 不再扫描回答文本(会误判"解释错误处理"等正常回答)
             success = not self.decision.last_had_tool_error
             self.stats_tracker.record(
@@ -414,7 +446,7 @@ class DualCoreAgent:
                 fast_path=fast_path,
             )
         logger.log("system", "任务完成",
-                   f"[{'聊天' if is_chat else ('快速' if fast_path else '双核')}] "
+                   f"[{'轻量' if is_light else ('快速' if fast_path else '双核')}] "
                    f"耗时 {record['timing']['total_s']}s, "
                    f"今日花费 ¥{record['cost']['total_cost_yuan']}")
         return record
@@ -434,10 +466,14 @@ class DualCoreAgent:
     def _run_stream_inner(self, task: str, use_secretary: str,
                           history_text: str, t0: float, mode: str | None = None):
         actual_mode = self._apply_mode(mode)
-        is_chat = actual_mode == "chat"
+        self.current_mode = actual_mode
+        self.conversation = self.conversations.get(actual_mode, [])
+        conv = self.conversation  # 本地引用: 任务执行期间即使切换模式也不会串台
+        is_light = actual_mode in ("chat", "brainstorm")
 
-        if is_chat:
-            fast_path = True
+        if is_light:
+            # chat/brainstorm: 默认快速通道, 但手动强制开秘书(on)时走完整双核
+            fast_path = use_secretary != "on"
         elif use_secretary == "off":
             fast_path = True
         elif use_secretary == "on":
@@ -446,9 +482,9 @@ class DualCoreAgent:
             fast_path = is_simple_question(task)
 
         if fast_path:
-            yield {"type": "status", "message": "聊天模式: 直接回答中..." if is_chat else "快速通道: 直接回答中..."}
-            context = "(聊天模式: 精简上下文, 仅可查实时信息)" if is_chat else "(快速通道: 未启用秘书检索)"
-            allowed_tools = list(self._chat_tools) if is_chat else (
+            yield {"type": "status", "message": "轻量模式: 直接回答中..." if is_light else "快速通道: 直接回答中..."}
+            context = "(轻量模式: 精简上下文, 仅可查实时信息)" if is_light else "(快速通道: 未启用秘书检索)"
+            allowed_tools = list(self._chat_tools) if is_light else (
                 self.secretary._select_tools(task) if self.secretary.tool_manager else None)
             secretary_time = 0
             matched_skill = None
@@ -466,7 +502,7 @@ class DualCoreAgent:
                 yield {"type": "status", "message": f"已加载技能工作流..."}
 
         # 临时目录规则(注入给决策核心, 约束测试文件落点) —— 聊天模式不需要
-        if not is_chat:
+        if not is_light:
             context += "\n\n" + temp_workspace.context_hint()
             # 项目档案自动召回
             try:
@@ -495,12 +531,12 @@ class DualCoreAgent:
         decision_time = round(time.time() - t2, 2)
 
         # 反思 (非流式, 快速通道/聊天模式跳过)
-        reflection = "(聊天模式: 未启用反思与沉淀)" if is_chat else "(快速通道: 未启用反思)"
+        reflection = "(轻量模式: 未启用反思与沉淀)" if is_light else "(快速通道: 未启用反思)"
         if not fast_path:
             yield {"type": "status", "message": "秘书正在复盘..."}
             tools_used = self.decision.last_tools_used
-            self.secretary.record_result(task, result, tools_used=tools_used)
-            reflection = self.secretary.reflect(task, result, context)
+            self.secretary.record_result(task, result, tools_used=tools_used, mode=actual_mode)
+            reflection = self.secretary.reflect(task, result, context, mode=actual_mode)
             # 技能使用记录 + 自我改进 (与非流式路径对齐)
             if matched_skill:
                 self._record_and_improve_skill(
@@ -511,15 +547,15 @@ class DualCoreAgent:
 
         total_time = round(time.time() - t0, 2)
 
-        # 保存对话历史 (聊天模式不索引长期向量)
-        self.conversation.append({"role": "user", "content": task})
-        self.conversation.append({"role": "assistant", "content": result})
-        self._save_conversation(skip_index=is_chat)
+        # 保存对话历史 (轻量模式不索引长期向量)
+        conv.append({"role": "user", "content": task})
+        conv.append({"role": "assistant", "content": result})
+        self._save_conversation(skip_index=is_light, mode=actual_mode, conv=conv)
 
         record = {
             "task": task, "context": context, "result": result,
             "reflection": reflection, "fast_path": fast_path, "mode": actual_mode,
-            "history_turns": len(self.conversation) // 2,
+            "history_turns": len(conv) // 2,
             "timing": {
                 "secretary_s": secretary_time,
                 "decision_s": decision_time,
@@ -534,7 +570,7 @@ class DualCoreAgent:
         }
         self.task_history.append(record)
         # 记录任务统计 (聊天模式不沉淀)
-        if not is_chat:
+        if not is_light:
             # 成功判定以工具真实执行情况为准, 不再扫描回答文本(会误判"解释错误处理"等正常回答)
             success = not self.decision.last_had_tool_error
             self.stats_tracker.record(
@@ -547,7 +583,7 @@ class DualCoreAgent:
                 fast_path=fast_path,
             )
         logger.log("system", "任务完成(流)",
-                   f"[{'聊天' if is_chat else ('快速' if fast_path else '双核')}] 耗时 {total_time}s")
+                   f"[{'轻量' if is_light else ('快速' if fast_path else '双核')}] 耗时 {total_time}s")
         yield {"type": "complete", "record": record}
 
     def run_linux_command(self, command: str) -> dict:

@@ -69,15 +69,18 @@ class Library:
         except Exception as e:
             print(f"[SQLite] {self.name} 迁移失败: {e}")
 
-    def add(self, content: str, meta: dict | None = None) -> dict:
+    def add(self, content: str, meta: dict | None = None, mode: str | None = None) -> dict:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        meta = meta or {}
+        if mode:
+            meta["mode"] = mode
         cursor = self.db.execute(
             f"INSERT INTO {self.name} (content, meta, timestamp) VALUES (?, ?, ?)",
-            (content, json.dumps(meta or {}, ensure_ascii=False), timestamp),
+            (content, json.dumps(meta, ensure_ascii=False), timestamp),
         )
         item_id = cursor.lastrowid
         self.vector_store.add(self._vid(item_id), content)
-        return {"id": item_id, "content": content, "meta": meta or {}, "timestamp": timestamp}
+        return {"id": item_id, "content": content, "meta": meta, "timestamp": timestamp}
 
     def clear(self):
         """清空所有条目 (同时清理向量)"""

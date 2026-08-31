@@ -1,0 +1,46 @@
+confidence: 1.0
+consecutive_failures: 0
+description: '顽固问题排查与自我验证流程: 连续修改2次未生效时停止猜测, 用证据定位根因; 改完代码必须自己启动验证, 不让用户当测试员'
+improved_at: ''
+name: self_verification_workflow
+required_tools:
+- code_exec
+- file_read
+- linux_terminal
+steps:
+- description: '判断是否为顽固问题: 同一问题已修改2次仍未生效, 或用户反馈"还是不行/没修好"'
+  tool: code_exec
+- description: '用证据验证假设: curl请求API确认返回内容, 检查函数是否存在, 查看实际渲染的HTML/CSS/JS, 不要凭印象判断'
+  tool: linux_terminal
+- description: '分层排查根因: 是代码问题? 配置问题? 缓存问题? 环境问题? 逐层排除直到找到真正原因'
+  tool: code_exec
+- description: '针对性修复根因, 而不是继续在错误的层面试错'
+  tool: code_edit
+- description: '自己启动应用验证: 启动测试服务器, 实际访问页面, 确认渲染正常'
+  tool: linux_terminal
+- description: '检查运行时报错: 确认所有被调用的函数都存在, API端点可达, 没有JS语法错误'
+  tool: code_exec
+- description: '验证关联功能: 不只看单点, 同时检查相关模块是否受影响'
+  tool: code_exec
+- description: '清理临时文件和测试服务器, git diff确认改动无误'
+  tool: linux_terminal
+tags:
+- debugging
+- verification
+- workflow
+- best_practice
+trigger:
+  keywords:
+  - 没修好
+  - 还是不行
+  - bug还在
+  - 反复修改
+  - 不生效
+  - 没变化
+  - 缓存
+  - verify
+  - self-test
+  patterns:
+  - (没修好|还是不行|不生效|没变化).{0,30}(UI|界面|显示|功能)
+  - (修改|改了).{0,20}(多次|好几次|多次都)
+version: 1

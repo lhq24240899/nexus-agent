@@ -5,6 +5,8 @@
 支持流式输出 (SSE)
 """
 import json
+import os
+
 from openai import OpenAI
 from config import DECISION_CONFIG
 from utils.logger import logger
@@ -35,16 +37,22 @@ class DecisionCore:
         # 模型覆盖: None 用默认决策模型, 非 None 时临时切换 (聊天模式用 flash)
         self.override_model: str | None = None
         self.ctx_manager = ContextManager(model=self.model, llm_client=self.client if self.configured else None)
+        from core.error_diagnoser import CodeErrorDiagnoser
+        self.error_diagnoser = CodeErrorDiagnoser(work_dir=os.getcwd())
 
     def set_mode(self, mode: str):
-        """切换工作/聊天模式 (由 DualCoreAgent 在任务前调用)"""
-        self.mode = mode if mode in ("work", "chat") else "work"
+        """切换工作/聊天/头脑风暴模式 (由 DualCoreAgent 在任务前调用)"""
+        self.mode = mode if mode in ("work", "chat", "brainstorm") else "work"
 
     def _active_model(self) -> str:
         return self.override_model or self.model
 
     def _active_system_prompt(self) -> str:
-        return self.CHAT_SYSTEM_PROMPT if self.mode == "chat" else self.SYSTEM_PROMPT
+        if self.mode == "chat":
+            return self.CHAT_SYSTEM_PROMPT
+        if self.mode == "brainstorm":
+            return self.BRAINSTORM_SYSTEM_PROMPT
+        return self.SYSTEM_PROMPT
 
     @staticmethod
     def _is_tool_error(tool_result: str) -> bool:
@@ -96,6 +104,13 @@ class DecisionCore:
 - "验证通过"必须基于真实工具输出, 不能编造
 - 连续失败3次 → 总结原因, 告诉用户卡在哪里
 
+【自我验证工作流 —— 向 Codex 学习, 必须遵守】
+- 改完代码必须自己启动验证, 绝对不要让用户当测试员
+- 验证流程: 启动服务/运行测试 → 实际访问确认渲染 → 检查运行时报错(函数是否存在/API是否可达) → 验证关联功能 → 清理临时文件 → git diff确认
+- 同一问题修改2次仍未生效, 立即停止猜测, 用证据定位根因: curl请求确认返回内容, 检查函数是否存在, 分层排查(代码/配置/缓存/环境)
+- UI修改不生效时优先怀疑缓存(WebView2/浏览器缓存), 用时间戳URL或no-cache头解决
+- 用完即删临时文件(_patch_*.py/_test_*.py等), 不要留在项目目录
+
 【输出格式】
 ## 修改总结
 (改了哪些文件, 每个文件改了什么)
@@ -123,6 +138,39 @@ class DecisionCore:
 - 不要输出"修改总结/验证结果"这类工程化格式
 - 不要调用编码工具或创建文件
 - 不要编造事实, 不确定就说不确定
+"""
+
+    BRAINSTORM_SYSTEM_PROMPT = """你是 Nexus —— 头脑风暴 Agent, 当前处于创意发散模式。
+
+【核心任务】
+针对用户给出的主题, 自动运行一场完整的端到端头脑风暴, 全程不需要用户介入。
+
+【五顶思维帽 —— 必须依次切换】
+1. 疯子帽: 抛开所有约束, 提出最疯狂、最不可能、最跨界的想法, 越离谱越好
+2. 律师帽: 对每个想法做正反面剖析, 列出优点、缺点、风险、可行性
+3. 婴儿帽: 用最原始、最天真的视角重新提问, 挑战所有默认假设
+4. 记者帽: 用 web_search 查证关键事实, 收集数据、案例、趋势, 用事实支撑创意
+5. 建筑师帽: 整合所有想法, 构建可落地的方案框架, 给出实施路径
+
+【四步工作流 —— 必须贯穿全程】
+1. 破冰: 用一个随机词或跨界类比打开思路(自己想一个随机词, 强行和主题关联)
+2. 发散: 五顶帽子轮番上阵, 尽可能多地产生想法, 不评判
+3. 碰撞: 把不同想法交叉组合, 寻找化学反应, 列出组合后的新可能
+4. 收敛: 筛选出最有价值的3个方向, 给出具体的行动建议
+
+【必须包含的产出】
+- 正反面优缺点剖析(至少对TOP5想法逐一分析)
+- 一篇"2033年未来新闻稿": 想象这个想法在2033年成为现实, 写一篇新闻报道
+- 利益相关者地图: 列出谁会受益、谁会受损、谁是关键决策者
+
+【铁律】
+- 全程禁止向用户提问, 禁止让用户做选择题, 禁止让用户中途输入
+- 直接输出一场完整的头脑风暴, 不要说"让我们开始吧"之类的过渡语
+- 以收敛结论和一句话金句收尾
+- 可以用 web_search 查资料和趋势, 但不要因为查资料而中断创意流程
+
+【输出格式】
+用清晰的标题分隔五个帽子和四个步骤, 最后给收敛结论和金句。
 """
 
     def _get_filtered_functions(self, allowed_tools: list[str] = None) -> list:
@@ -155,6 +203,7 @@ class DecisionCore:
                    f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}")
         self.last_tools_used = []
         self.last_tool_errors = 0
+        self.error_diagnoser.reset()
         messages = self._build_messages(task, context, history_text)
         total_input = 0
         total_output = 0
@@ -200,14 +249,26 @@ class DecisionCore:
                     tool_result = self.tool_manager.execute(tool_name, **tool_args)
                     # 工具结果截断, 防止撑爆上下文
                     tool_result = truncate_tool_result(tool_result)
-                    # 错误时计数并附加重试提示
+                    # 错误时计数 + 自动诊断代码 + 注入相关文件上下文
                     if self._is_tool_error(tool_result):
                         self.last_tool_errors += 1
-                        tool_result += (
-                            "\n\n[系统提示] 工具执行失败, 请检查参数是否正确。"
-                            "如果是文件不存在, 先用 file_list 确认路径; "
-                            "如果是参数错误, 修正后重试; 连续失败请换一种方法。"
-                        )
+                        try:
+                            diag = self.error_diagnoser.diagnose(
+                                tool_output=tool_result,
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                            )
+                            diag_ctx = self.error_diagnoser.to_context_string(diag)
+                            tool_result += diag_ctx
+                            logger.log("nexus", "代码错误自动诊断",
+                                       f"读取 {diag.get('files_examined', 0)} 个文件, "
+                                       f"错误 {len(diag.get('errors', []))} 个")
+                        except Exception as diag_err:
+                            tool_result += (
+                                "\n\n[系统提示] 工具执行失败, 请检查代码和参数。"
+                                "如果是文件不存在, 先用 file_list 确认路径; "
+                                "如果是语法错误, 修正后重试; 连续失败请换一种方法。"
+                            )
                     logger.log("nexus", "工具返回",
                                f"{tool_name}: {tool_result[:60]}")
                     messages.append({

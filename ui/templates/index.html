@@ -2,9 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nexus Dual-Core Agent Console</title>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="/static/marked.min.js" onerror="this.src='https://cdn.jsdelivr.net/npm/marked/marked.min.js'"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 <style>
@@ -267,28 +270,33 @@
     padding: 3px 8px; border-radius: 4px; font-size: 12px;
   }
   .mode-segmented {
-    display: flex; background: #0d1117; border: 1px solid #30363d;
-    border-radius: 6px; overflow: hidden;
+    display: flex; background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; overflow: hidden;
   }
   .mode-segmented button {
+    appearance: none; -webkit-appearance: none;
     background: transparent; border: none; color: #8b949e;
-    padding: 4px 14px; font-size: 12px; cursor: pointer;
-    transition: all 0.15s;
+    padding: 6px 16px; font-size: 12px; cursor: pointer;
+    transition: background 0.15s; font-weight: 400;
+    border-right: 1px solid #30363d;
+    font-family: inherit; outline: none;
   }
-  .mode-segmented button:hover { color: #c9d1d9; }
+  .mode-segmented button:last-child { border-right: none; }
+  .mode-segmented button:hover { color: #c9d1d9; background: #21262d; }
   .mode-segmented button.active {
     background: #1f6feb; color: #fff; font-weight: 500;
   }
   .sec-toggle-wrap {
-    display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e;
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b949e;
+    margin-left: auto;
   }
   .sec-toggle {
-    position: relative; width: 36px; height: 20px;
-    background: #30363d; border-radius: 10px; cursor: pointer;
-    transition: background 0.2s; border: none; padding: 0;
+    position: relative; width: 38px; height: 22px;
+    background: #30363d; border-radius: 11px; cursor: pointer;
+    transition: background 0.2s; border: none; padding: 0; flex-shrink: 0;
   }
   .sec-toggle::after {
-    content: ''; position: absolute; top: 2px; left: 2px;
+    content: ''; position: absolute; top: 3px; left: 3px;
     width: 16px; height: 16px; background: #8b949e; border-radius: 50%;
     transition: all 0.2s;
   }
@@ -296,21 +304,87 @@
     background: #1f6feb;
   }
   .sec-toggle.on::after {
-    left: 18px; background: #fff;
+    left: 19px; background: #fff;
   }
-  .input-row { display: flex; gap: 8px; }
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
+  .upload-btn {
+    background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    width: 40px; height: 40px; border-radius: 8px; cursor: pointer;
+    font-size: 18px; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0;
+  }
+  .upload-btn:hover { background: #30363d; color: #c9d1d9; border-color: #8b949e; }
+  .file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; min-height: 0; }
+  .file-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    padding: 4px 8px; font-size: 11px; color: #c9d1d9;
+  }
+  .file-chip .type-badge {
+    padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 600;
+  }
+  .type-image { background: #238636; color: #fff; }
+  .type-code { background: #1f6feb; color: #fff; }
+  .type-doc { background: #9e6a03; color: #fff; }
+  .type-audio { background: #8957e5; color: #fff; }
+  .type-video { background: #da3633; color: #fff; }
+  .type-other { background: #6e7681; color: #fff; }
+  .file-chip .remove-file {
+    cursor: pointer; color: #8b949e; font-size: 14px; line-height: 1;
+    background: none; border: none; padding: 0 2px;
+  }
+  .file-chip .remove-file:hover { color: #f85149; }
+  .modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6); z-index: 1000; align-items: center; justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+    width: 480px; max-width: 90vw; padding: 24px;
+  }
+  .modal h3 { margin: 0 0 16px 0; color: #c9d1d9; font-size: 16px; }
+  .drop-zone {
+    border: 2px dashed #30363d; border-radius: 8px; padding: 40px 20px;
+    text-align: center; color: #8b949e; cursor: pointer; transition: all 0.15s;
+    margin-bottom: 12px;
+  }
+  .drop-zone:hover, .drop-zone.dragover { border-color: #1f6feb; background: #161b22; color: #58a6ff; }
+  .drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .modal-actions button {
+    padding: 6px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none;
+  }
+  .btn-cancel { background: #21262d; color: #8b949e; }
+  .btn-cancel:hover { background: #30363d; }
+  .btn-confirm { background: #1f6feb; color: #fff; }
+  .btn-confirm:hover { background: #388bfd; }
+  .error-banner {
+    background: rgba(220,38,38,0.15); border: 1px solid #da3633; border-radius: 6px;
+    padding: 8px 12px; margin-bottom: 8px; font-size: 12px; color: #f85149;
+    display: none; align-items: flex-start; gap: 8px;
+  }
+  .error-banner.show { display: flex; }
+  .error-banner .diag-btn {
+    margin-left: auto; background: none; border: 1px solid #da3633; color: #f85149;
+    padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; flex-shrink: 0;
+  }
+  .error-banner .diag-btn:hover { background: rgba(218,54,51,0.2); }
   .chat-input textarea {
     flex: 1; background: #0d1117; border: 1px solid #30363d;
     color: #c9d1d9; padding: 10px; border-radius: 8px; resize: none;
     font-size: 14px; font-family: inherit; height: 50px;
   }
   .chat-input textarea:focus { outline: none; border-color: #58a6ff; }
-  .chat-input button {
-    background: #1f6feb; color: #fff; border: none; padding: 0 20px;
-    border-radius: 8px; cursor: pointer; font-size: 14px;
+  #send-btn {
+    background: #1f6feb; color: #fff; border: none; padding: 0 24px;
+    height: 50px; border-radius: 8px; cursor: pointer; font-size: 14px;
+    font-family: inherit; flex-shrink: 0; transition: background 0.15s;
   }
-  .chat-input button:disabled { background: #30363d; cursor: not-allowed; }
-  .chat-input button.stop-btn { background: #da3633; }
+  #send-btn:hover { background: #388bfd; }
+  #send-btn:disabled { background: #30363d; cursor: not-allowed; }
+  #send-btn.stop-btn { background: #da3633; }
+  #send-btn.stop-btn:hover { background: #f85149; }
 
   /* 右侧面板 */
   .side-panel { flex: 1; display: flex; flex-direction: column; min-width: 300px; }
@@ -421,6 +495,43 @@
     padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;
   }
   .loading { color: #8b949e; font-style: italic; }
+  /* 四库搜索/条目优化 */
+  .lib-search {
+    width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 8px 12px; border-radius: 6px; font-size: 13px; font-family: inherit;
+    margin-bottom: 12px;
+  }
+  .lib-search:focus { outline: none; border-color: #58a6ff; }
+  .lib-search::placeholder { color: #6e7681; }
+  .lib-item .item-head {
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .lib-item .item-head .time { float: none; margin-left: auto; }
+  .lib-item .item-text {
+    margin-top: 4px; font-size: 13px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word; user-select: text;
+  }
+  .lib-item.clamped .item-text {
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .lib-item .clamp-btn {
+    background: none; border: none; color: #58a6ff; cursor: pointer;
+    font-size: 12px; padding: 2px 0; margin-top: 2px; font-family: inherit;
+  }
+  .lib-item .clamp-btn:hover { text-decoration: underline; }
+  .lib-item mark {
+    background: rgba(210, 153, 34, 0.35); color: #e6edf3;
+    border-radius: 2px; padding: 0 1px;
+  }
+  .lib-empty-hint { color: #6e7681; font-size: 13px; padding: 8px; }
+  .mode-badge {
+    padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .mode-work { background: rgba(31,111,235,0.2); color: #58a6ff; }
+  .mode-chat { background: rgba(35,134,54,0.2); color: #3fb950; }
+  .mode-brainstorm { background: rgba(137,87,229,0.2); color: #d2a8ff; }
   .fast-path-badge {
     display: inline-block; background: #238636; color: #fff;
     padding: 1px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;
@@ -439,13 +550,9 @@
   <div class="chat-panel" id="chat-panel">
     <div class="chat-messages" id="chat-messages">
       <div id="history-loader" style="text-align:center; padding:8px; color:#8b949e; font-size:12px; display:none;">Loading older messages...</div>
-      <div class="msg nexus">
+      <div class="msg nexus" id="welcome-msg">
         <div class="bubble">I'm Nexus, a dual-core coding agent. Tell me what to build or fix.</div>
         <div class="meta">Nexus · System</div>
-        <div class="msg-actions">
-          <button onclick="handleAction('copy', this)" title="Copy"><span class="icon">📋</span>Copy</button>
-          <button class="more-btn" onclick="showContextMenu(event, 'nexus')" title="More">⋯</button>
-        </div>
       </div>
     </div>
     <div class="chat-input">
@@ -453,13 +560,20 @@
         <div class="mode-segmented" id="agent-mode">
           <button class="active" data-mode="work" onclick="switchAgentMode('work')">Work</button>
           <button data-mode="chat" onclick="switchAgentMode('chat')">Chat</button>
+          <button data-mode="brainstorm" onclick="switchAgentMode('brainstorm')">Brainstorm</button>
         </div>
         <div class="sec-toggle-wrap">
           <span>Secretary</span>
           <button class="sec-toggle on" id="secretary-toggle" onclick="toggleSecretary()"></button>
         </div>
       </div>
+      <div class="error-banner" id="error-banner">
+        <span id="error-msg"></span>
+        <button class="diag-btn" onclick="diagnoseError()">Diagnose</button>
+      </div>
+      <div class="file-chips" id="file-chips"></div>
       <div class="input-row">
+        <button class="upload-btn" onclick="openUploadModal()" title="Attach files">📎</button>
         <textarea id="user-input" placeholder="Enter task... (Enter to send, Shift+Enter for newline)"></textarea>
         <button id="send-btn" onclick="sendMessage()">Send</button>
       </div>
@@ -506,8 +620,7 @@
 
     <div class="tab-content" id="tab-libs">
       <div class="lib-actions">
-        <button class="seed-btn" onclick="seedData()" style="margin-bottom:0;">Seed Demo</button>
-        <button id="toggle-all-libs" onclick="toggleAllLibs()">Expand All</button>
+        <button id="toggle-all-libs" onclick="toggleAllLibs()">Collapse All</button>
         <button onclick="compactExperience()" title="Auto at 30 items, or manual">Compact Exp</button>
         <button onclick="cleanMemory()" title="Remove task logs from memory">Clean Memory</button>
       </div>
@@ -521,6 +634,9 @@
         </select>
         <button class="seed-btn" onclick="addKnowledge()">Add</button>
       </div>
+      <input id="lib-search" type="text" class="lib-search"
+             placeholder="Search tools / knowledge / experience / memory..."
+             oninput="renderLibraries()">
       <div id="libs-content"></div>
     </div>
 
@@ -619,7 +735,17 @@ let historyLoading = false;
 const HISTORY_PAGE_SIZE = 12; // 每次加载6轮(12条)
 
 async function loadInitialHistory() {
-  // 页面加载时拉取最近的消息
+  // 先同步后端当前模式, 保证拉取的是该模式自己的历史
+  try {
+    const r = await fetch('/api/mode');
+    const d = await r.json();
+    if (d.mode) {
+      currentAgentMode = d.mode;
+      document.querySelectorAll('#agent-mode button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === d.mode);
+      });
+    }
+  } catch (e) {}
   historyOffset = 0;
   historyHasMore = true;
   await loadMoreHistory(true);
@@ -632,7 +758,7 @@ async function loadMoreHistory(isInitial = false) {
   if (loader) loader.style.display = 'block';
 
   try {
-    const resp = await fetch(`/api/history?offset=${historyOffset}&limit=${HISTORY_PAGE_SIZE}`);
+    const resp = await fetch(`/api/history?offset=${historyOffset}&limit=${HISTORY_PAGE_SIZE}&mode=${encodeURIComponent(currentAgentMode)}`);
     const data = await resp.json();
     const box = document.getElementById('chat-messages');
     const loaderEl = document.getElementById('history-loader');
@@ -737,12 +863,13 @@ if (window.hljs) {
       }
     }
   });
-} else {
+} else if (typeof marked !== 'undefined') {
   marked.setOptions({ breaks: true, gfm: true });
 }
 
 function renderMarkdown(text) {
   if (!text) return '';
+  if (typeof marked === 'undefined') return escapeHtml(text).replace(/\n/g, '<br>');
   try {
     return marked.parse(text);
   } catch (e) {
@@ -955,32 +1082,50 @@ function addToolStatus(toolName, parentDiv) {
 // ============ Send消息 (流式) ============
 let currentAbortController = null;
 
+let currentAgentMode = 'work';
+
 async function switchAgentMode(mode) {
+  if (mode === currentAgentMode) return;
+  // 切换后端模式 (以后端实际生效模式为准)
+  try {
+    const r = await fetch('/api/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: mode}),
+    });
+    const d = await r.json();
+    if (d && d.mode) mode = d.mode;
+  } catch (e) {}
+  currentAgentMode = mode;
   document.querySelectorAll('#agent-mode button').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
   });
+  // chat/brainstorm 模式秘书默认关, work 模式保持上次状态
+  if (mode === 'chat' || mode === 'brainstorm') {
+    document.getElementById('secretary-toggle').classList.remove('on');
+  }
+  // 清空对话区(保留欢迎消息和顶部加载提示), 加载该模式自己的历史
+  const box = document.getElementById('chat-messages');
+  const welcome = document.getElementById('welcome-msg');
+  box.innerHTML = '';
+  const loader = document.createElement('div');
+  loader.id = 'history-loader';
+  loader.style.cssText = 'text-align:center;padding:8px;color:#8b949e;font-size:12px;display:none;';
+  loader.textContent = 'Loading older messages...';
+  box.appendChild(loader);
+  if (welcome) box.appendChild(welcome);
+  historyOffset = 0;
+  historyHasMore = true;
+  await loadMoreHistory(true);
+  loadStats();  // 刷新状态栏的当前模式/轮次
 }
 
 function toggleSecretary() {
   const btn = document.getElementById('secretary-toggle');
   btn.classList.toggle('on');
-},
-          body: JSON.stringify({mode: mode}),
-        });
-      } catch (e) { console.warn('mode switch failed', e); }
-    }
+}
 
-    // 页面加载时同步后端当前模式
-    (async function initAgentMode() {
-      try {
-        const r = await fetch('/api/mode');
-        const d = await r.json();
-        const sel = document.getElementById('agent-mode');
-        if (sel && d.mode) sel.value = d.mode;
-      } catch (e) {}
-    })();
-
-    async function sendMessage() {
+async function sendMessage() {
   const input = document.getElementById('user-input');
   const btn = document.getElementById('send-btn');
   const msg = input.value.trim();
@@ -995,8 +1140,15 @@ function toggleSecretary() {
 
     addMessage('user', msg);
 
-    const secMode = document.getElementById('secretary-toggle').classList.contains('on') ? 'auto' : 'off';
-    const agentMode = document.querySelector('#agent-mode button.active')?.dataset.mode || 'work';
+    // 附加文件上下文
+    const fileCtx = await buildFileContext();
+    const finalMsg = msg + fileCtx;
+
+    const _secOn = document.getElementById('secretary-toggle').classList.contains('on');
+    const _isLight = currentAgentMode === 'chat' || currentAgentMode === 'brainstorm';
+    // work模式: 开=auto(自动判断); chat/brainstorm: 开=on(强制秘书, 不受40+字限制)
+    const secMode = _secOn ? (_isLight ? 'on' : 'auto') : 'off';
+    const agentMode = currentAgentMode;
     const respDiv = document.createElement('div');
     respDiv.className = 'msg nexus';
     respDiv.innerHTML = '<div class="bubble loading">Nexus thinking...</div>';
@@ -1015,7 +1167,7 @@ function toggleSecretary() {
     const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg, use_secretary: secMode, mode: agentMode}),
+      body: JSON.stringify({message: finalMsg, use_secretary: secMode, mode: agentMode}),
       signal: currentAbortController.signal,
     });
 
@@ -1030,9 +1182,11 @@ function toggleSecretary() {
       const lines = buffer.split('\n\n');
       buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const event = JSON.parse(line.slice(6));
+      for (const block of lines) {
+        // SSE 事件块可能含 id:/data:/event: 多行, 只取 data: 行
+        const dataLine = block.split('\n').find(l => l.startsWith('data: '));
+        if (!dataLine) continue;
+        const event = JSON.parse(dataLine.slice(6));
 
         if (event.type === 'status') {
           bubble.textContent = event.message;
@@ -1099,6 +1253,8 @@ function toggleSecretary() {
   btn.textContent = 'Send';
   btn.className = '';
   btn.onclick = sendMessage;
+  pendingFiles = [];
+  renderFileChips();
   document.getElementById('chat-messages').scrollTop = 999999;
   } catch (outerErr) {
     console.error('sendMessage error:', outerErr);
@@ -1202,43 +1358,82 @@ const libSections = [
   { key: 'memory', name: 'Memory', color: '#bc8cff' },
 ];
 
+let libsData = {};
+const libCollapsed = { tools: false, knowledge: false, experience: false, memory: false };
+let libsExpanded = true;
+
 async function loadLibraries() {
   try {
     const resp = await fetch('/api/libraries');
-    const data = await resp.json();
-    document.getElementById('libs-content').innerHTML = libSections.map(sec => {
-      const items = data[sec.key] || [];
-      return `<div class="lib-section" id="lib-${sec.key}">
-        <div class="lib-header" onclick="toggleLib('${sec.key}')">
-          <h3 style="color:${sec.color};">${sec.name}</h3>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="count">${items.length} items</span><span class="arrow">▼</span>
-          </div>
-        </div>
-        <div class="lib-body">
-          ${items.length === 0 ? '<div style="color:#6e7681;font-size:13px;padding:8px;">No content</div>' :
-            items.map(i => `<div class="lib-item">
-              <button class="del-btn" onclick="deleteLibItem('${sec.key}', ${i.id})" title="Delete">×</button>
-              <span class="id">#${i.id}</span><span class="time">${i.time}</span>${escapeHtml(i.content)}
-            </div>`).join('')
-          }
-        </div>
-      </div>`;
-    }).join('');
+    libsData = await resp.json();
+    renderLibraries();
   } catch (e) {}
 }
 
-function toggleLib(key) { document.getElementById('lib-' + key).classList.toggle('collapsed'); }
-let libsExpanded = true;
+function libQuery() {
+  return (document.getElementById('lib-search')?.value || '').trim().toLowerCase();
+}
+
+function highlightLibText(text, q) {
+  const esc = escapeHtml(text);
+  if (!q) return esc;
+  const eq = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return esc.replace(new RegExp('(' + eq + ')', 'gi'), '<mark>$1</mark>');
+}
+
+function renderLibraries() {
+  const q = libQuery();
+  document.getElementById('libs-content').innerHTML = libSections.map(sec => {
+    const all = (libsData[sec.key] || []).slice().reverse();  // 最新在前
+    const items = q ? all.filter(i => i.content.toLowerCase().includes(q)) : all;
+    // 搜索时强制展开; 否则按折叠状态
+    const collapsed = q ? false : libCollapsed[sec.key];
+    const countLabel = q ? `${items.length}/${all.length} match` : `${all.length} items`;
+    return `<div class="lib-section${collapsed ? ' collapsed' : ''}" id="lib-${sec.key}">
+      <div class="lib-header" onclick="toggleLib('${sec.key}')">
+        <h3 style="color:${sec.color};">${sec.name}</h3>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="count">${countLabel}</span><span class="arrow">▼</span>
+        </div>
+      </div>
+      <div class="lib-body">
+        ${items.length === 0
+          ? `<div class="lib-empty-hint">${all.length === 0 ? 'No content' : 'No matches'}</div>`
+          : items.map(i => {
+              const long = i.content.length > 120 || i.content.includes('\n');
+              return `<div class="lib-item clamped" id="libitem-${sec.key}-${i.id}">
+                <button class="del-btn" onclick="deleteLibItem('${sec.key}', ${i.id})" title="Delete">×</button>
+                <div class="item-head"><span class="id">#${i.id}</span><span class="time">${i.time}</span>${i.mode ? `<span class="mode-badge mode-${i.mode}">${i.mode}</span>` : ''}</div>
+                <div class="item-text">${highlightLibText(i.content, q)}</div>
+                ${long ? `<button class="clamp-btn" onclick="toggleClamp('${sec.key}', ${i.id})">展开 ▾</button>` : ''}
+              </div>`;
+            }).join('')
+        }
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleClamp(key, id) {
+  const el = document.getElementById('libitem-' + key + '-' + id);
+  if (!el) return;
+  const clamped = el.classList.toggle('clamped');
+  el.querySelector('.clamp-btn').textContent = clamped ? '展开 ▾' : '收起 ▴';
+}
+
+function toggleLib(key) {
+  libCollapsed[key] = !libCollapsed[key];
+  document.getElementById('lib-' + key).classList.toggle('collapsed');
+}
+
 function toggleAllLibs() {
   libsExpanded = !libsExpanded;
+  libSections.forEach(sec => { libCollapsed[sec.key] = !libsExpanded; });
   document.querySelectorAll('.lib-section').forEach(el => {
-    if (libsExpanded) el.classList.remove('collapsed');
-    else el.classList.add('collapsed');
+    el.classList.toggle('collapsed', !libsExpanded);
   });
   document.getElementById('toggle-all-libs').textContent = libsExpanded ? 'Collapse All' : 'Expand All';
 }
-
 async function addKnowledge() {
   const content = document.getElementById('new-knowledge').value.trim();
   const lib = document.getElementById('new-knowledge-lib').value;
@@ -1259,11 +1454,6 @@ async function deleteLibItem(lib, id) {
     await fetch(`/api/libraries/delete?library=${lib}&id=${id}`, {method: 'DELETE'});
     loadLibraries(); loadLogs();
   } catch (e) { alert('Delete failed: ' + e.message); }
-}
-
-async function seedData() {
-  await fetch('/api/seed', {method: 'POST'});
-  loadLibraries(); loadLogs();
 }
 
 async function compactExperience() {
@@ -1288,21 +1478,202 @@ async function loadStats() {
   try {
     const resp = await fetch('/api/stats');
     const s = await resp.json();
+    const searchMode = (s['四库统计'] && s['四库统计']['检索模式']) || 'unknown';
+    const linuxMode = s['Linux模式'] || 'unknown';
+    const tasks = s['历史任务数'] || 0;
+    const turns = s['对话轮次'] || 0;
+    const mode = s['当前模式'] || 'work';
     document.getElementById('sys-status').textContent =
-      `Search: ${s['四库统计']['检索模式']} · Linux: ${s['Linux模式']} · ` +
-      `Tasks: ${s['历史任务数']} · Chat: ${s['对话轮次']} turns`;
-  } catch (e) {}
+      `Ready · ${mode} · Search: ${searchMode} · Linux: ${linuxMode} · Tasks: ${tasks} · Turns: ${turns}`;
+  } catch (e) {
+    document.getElementById('sys-status').textContent = 'Ready';
+  }
 }
 
 document.getElementById('user-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 setInterval(() => { if (currentTab === 'logs') loadLogs(); }, 3000);
-loadLogs(); loadStats();
+// ========== 文件上传 ==========
+let pendingFiles = [];  // 待上传的文件 {file, type, name, size}
+
+const FILE_TYPE_MAP = {
+  image: { exts: ['jpg','jpeg','png','gif','webp','bmp','svg','ico'], label: 'IMG', cls: 'type-image' },
+  code:  { exts: ['py','js','ts','jsx','tsx','java','c','cpp','h','go','rs','rb','php','html','css','scss','json','yaml','yml','xml','sql','sh','bash','md','txt'], label: 'CODE', cls: 'type-code' },
+  doc:   { exts: ['pdf','doc','docx','xls','xlsx','ppt','pptx','csv'], label: 'DOC', cls: 'type-doc' },
+  audio: { exts: ['mp3','wav','ogg','flac','aac','m4a'], label: 'AUDIO', cls: 'type-audio' },
+  video: { exts: ['mp4','avi','mov','mkv','webm','flv'], label: 'VIDEO', cls: 'type-video' },
+};
+
+function classifyFile(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  for (const [type, info] of Object.entries(FILE_TYPE_MAP)) {
+    if (info.exts.includes(ext)) return { type, ...info };
+  }
+  return { type: 'other', label: 'FILE', cls: 'type-other' };
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + 'KB';
+  return (bytes/1048576).toFixed(1) + 'MB';
+}
+
+function openUploadModal() {
+  document.getElementById('upload-modal').classList.add('show');
+  renderModalFileList();
+}
+
+function closeUploadModal() {
+  document.getElementById('upload-modal').classList.remove('show');
+  document.getElementById('file-input').value = '';
+}
+
+function handleFileSelect(e) {
+  addFiles(Array.from(e.target.files));
+}
+
+function addFiles(files) {
+  for (const file of files) {
+    const info = classifyFile(file.name);
+    pendingFiles.push({ file, ...info, name: file.name, size: file.size });
+  }
+  renderModalFileList();
+}
+
+function renderModalFileList() {
+  const list = document.getElementById('modal-file-list');
+  if (pendingFiles.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = pendingFiles.map((f, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid #21262d;font-size:12px;">
+      <span class="type-badge ${f.cls}">${f.label}</span>
+      <span style="color:#c9d1d9;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</span>
+      <span style="color:#6e7681;">${formatSize(f.size)}</span>
+      <button onclick="removePendingFile(${i})" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;">×</button>
+    </div>
+  `).join('');
+}
+
+function removePendingFile(i) {
+  pendingFiles.splice(i, 1);
+  renderModalFileList();
+  renderFileChips();
+}
+
+function confirmUpload() {
+  closeUploadModal();
+  renderFileChips();
+}
+
+function renderFileChips() {
+  const container = document.getElementById('file-chips');
+  if (pendingFiles.length === 0) { container.innerHTML = ''; return; }
+  container.innerHTML = pendingFiles.map((f, i) => `
+    <div class="file-chip">
+      <span class="type-badge ${f.cls}">${f.label}</span>
+      <span>${f.name}</span>
+      <button class="remove-file" onclick="removePendingFile(${i})">×</button>
+    </div>
+  `).join('');
+}
+
+// 拖拽
+const dropZone = document.getElementById('drop-zone');
+if (dropZone) {
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    addFiles(Array.from(e.dataTransfer.files));
+  });
+}
+
+// 发送消息时把文件转成 base64 / 文本附加上下文
+async function buildFileContext() {
+  if (pendingFiles.length === 0) return '';
+  let ctx = '\n\n【附件】\n';
+  for (const f of pendingFiles) {
+    if (f.type === 'image') {
+      const base64 = await fileToBase64(f.file);
+      ctx += `- ${f.name} (${f.label}, ${formatSize(f.size)}): [图片 base64 数据已附加]\n`;
+    } else if (f.type === 'code' || f.type === 'doc') {
+      try {
+        const text = await f.file.text();
+        ctx += `- ${f.name} (${f.label}, ${formatSize(f.size)}):\n\`\`\`\n${text.slice(0, 8000)}\n\`\`\`\n`;
+      } catch {
+        ctx += `- ${f.name} (${f.label}, ${formatSize(f.size)}): [无法读取文本内容]\n`;
+      }
+    } else {
+      ctx += `- ${f.name} (${f.label}, ${formatSize(f.size)})\n`;
+    }
+  }
+  return ctx;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ========== 错误自动诊断 ==========
+let lastError = null;
+
+function showError(msg, context = '') {
+  lastError = { msg, context, time: new Date().toISOString() };
+  const banner = document.getElementById('error-banner');
+  document.getElementById('error-msg').textContent = msg;
+  banner.classList.add('show');
+  setTimeout(() => banner.classList.remove('show'), 8000);
+}
+
+async function diagnoseError() {
+  if (!lastError) return;
+  try {
+    const resp = await fetch('/api/diagnose', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(lastError),
+    });
+    const data = await resp.json();
+    let diagText = '【诊断结果】\n';
+    for (const [module, status] of Object.entries(data.checks || {})) {
+      const icon = status.ok ? '✅' : '❌';
+      diagText += `${icon} ${module}: ${status.message}\n`;
+    }
+    if (data.suggestion) diagText += `\n建议: ${data.suggestion}`;
+    addMessage('nexus', diagText);
+  } catch (e) {
+    showError('诊断服务不可用');
+  }
+}
+
+loadLogs(); loadStats(); loadTaskStats();
 </script>
 
 <!-- 弹出菜单 -->
 <div class="context-menu" id="context-menu"></div>
 
+  <!-- 上传弹窗 -->
+  <div class="modal-overlay" id="upload-modal">
+    <div class="modal">
+      <h3>Attach Files</h3>
+      <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="icon">📁</div>
+        <div>Click to browse or drag & drop files here</div>
+        <div style="font-size:11px;margin-top:4px;color:#6e7681">Auto-classified: image / code / doc / audio / video</div>
+      </div>
+      <input type="file" id="file-input" multiple style="display:none" onchange="handleFileSelect(event)">
+      <div id="modal-file-list" style="max-height:150px;overflow-y:auto;"></div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeUploadModal()">Cancel</button>
+        <button class="btn-confirm" onclick="confirmUpload()">Attach</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

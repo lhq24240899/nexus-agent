@@ -1,0 +1,48 @@
+description: 列出项目目录结构并分析主要模块划分，适用于快速理解代码库组织方式。
+improved_at: ''
+name: analyze_project_structure
+required_tools:
+- project_analyze
+- file_list
+- file_read
+- file_read
+- file_read
+- file_read
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- file_read
+- file_read
+- file_read
+- file_read
+steps:
+- description: 使用项目分析工具获取项目整体元信息，识别入口文件、配置文件及顶层组织
+  tool: project_analyze
+- description: 列出项目根目录及子目录的文件列表，形成完整目录树
+  tool: file_list
+- description: 读取关键文件（如入口程序、配置、README）以辨识模块职责
+  tool: file_read
+- description: 深入各主要子目录，确认模块内部文件组织及依赖关系
+  tool: file_list
+- description: 读取模块代表性文件，总结模块功能和边界
+  tool: file_read
+tags:
+- 项目分析
+- 代码审查
+- 目录结构
+- 模块划分
+trigger:
+  keywords:
+  - 项目目录结构
+  - 模块划分
+  - 代码结构分析
+  - 项目分析
+  - 目录树
+  patterns: []
+version: 1

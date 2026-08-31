@@ -18,7 +18,9 @@ class NexusDesktop:
         self.app = create_app()
         self.server_thread = None
         self.window = None
-        self.base_url = f"http://{WEB_CONFIG['host']}:{WEB_CONFIG['port']}"
+        # 每次启动用时间戳强制 WebView2 重新加载, 彻底避免缓存旧页面
+        import time as _time
+        self.base_url = f"http://{WEB_CONFIG['host']}:{WEB_CONFIG['port']}/?t={int(_time.time())}"
 
     def _start_flask(self):
         """在后台线程启动 Flask"""
