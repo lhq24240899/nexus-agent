@@ -6,6 +6,7 @@
 """
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from openai import OpenAI
 from config import DECISION_CONFIG
@@ -32,6 +33,8 @@ class DecisionCore:
         self.last_tools_used: list[str] = []
         # 本轮决策中工具执行失败的次数 (成功判定依据, 每次 decide 开头重置)
         self.last_tool_errors = 0
+        # 连续代码执行失败次数 (用于自修复闭环, 每次 decide 开头重置)
+        self.consecutive_code_failures = 0
         # 模式: work=完整编码助手, chat=轻量聊天 (影响系统提示词/工具/模型)
         self.mode = "work"
         # 模型覆盖: None 用默认决策模型, 非 None 时临时切换 (聊天模式用 flash)
@@ -61,6 +64,139 @@ class DecisionCore:
         if self.mode == "chat":
             return 0.5
         return self.temperature  # work 默认 0.7
+    def _execute_tool_calls_batch(self, tool_calls: list, yield_event=None) -> list:
+        """
+        批量执行工具调用, 自动并行无依赖的调用.
+
+        Args:
+            tool_calls: [{"id":..., "name":..., "args":...}, ...] 或 OpenAI tool_call 对象列表
+            yield_event: 可选回调, 用于流式输出 event (event_dict) -> None
+
+        Returns:
+            [(tool_call_id, tool_name, result), ...] 按原始输入顺序排列
+        """
+        if not tool_calls:
+            return []
+
+        # 统一解析为 dict
+        parsed = []
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                call_id = tc.get("id", "")
+                name = tc.get("name", "")
+                args_str = tc.get("args", "{}")
+            else:
+                call_id = tc.id
+                name = tc.function.name or ""
+                args_str = tc.function.arguments or "{}"
+            try:
+                args = json.loads(args_str) if args_str else {}
+            except json.JSONDecodeError:
+                args = {}
+            parsed.append({"id": call_id, "name": name, "args": args})
+
+        # ---- 依赖检查 ----
+        def _has_dependency(item, all_items):
+            args_text = json.dumps(item["args"], ensure_ascii=False).lower()
+            for other in all_items:
+                if other["id"] == item["id"]:
+                    continue
+                other_name = other["name"].lower()
+                if len(other_name) > 3 and other_name in args_text:
+                    return True
+            return False
+
+        independent = [p for p in parsed if not _has_dependency(p, parsed)]
+        dependent = [p for p in parsed if _has_dependency(p, parsed)]
+
+        if dependent and independent:
+            logger.log("nexus", "工具调度",
+                       f"并行 {len(independent)} 个, 串行 {len(dependent)} 个(有依赖)")
+        elif len(independent) > 1:
+            logger.log("nexus", "工具调度", f"{len(independent)} 个工具并行执行")
+
+        results_map = {}
+
+        def _run_one(item):
+            tool_name = item["name"]
+            tool_args = item["args"]
+            self.last_tools_used.append(tool_name)
+            if yield_event:
+                yield_event({"type": "tool_start", "name": tool_name,
+                             "args": json.dumps(tool_args, ensure_ascii=False)[:80]})
+            logger.log("nexus", "调用工具",
+                       f"{tool_name}({json.dumps(tool_args, ensure_ascii=False)[:50]})")
+            try:
+                tool_result = self.tool_manager.execute(tool_name, **tool_args)
+            except Exception as e:
+                tool_result = f"[工具执行异常] {type(e).__name__}: {e}"
+            tool_result = truncate_tool_result(tool_result)
+            if self._is_tool_error(tool_result):
+                self.last_tool_errors += 1
+                # 自修复闭环: 代码类工具失败时强制进入修复模式
+                is_code_tool = tool_name in ("code_exec", "code_edit", "file_write")
+                if is_code_tool:
+                    self.consecutive_code_failures += 1
+                    fail_count = self.consecutive_code_failures
+                    if fail_count >= 3:
+                        repair_hint = (
+                            f"\n\n[自修复闭环] 已连续失败 {fail_count} 次! "
+                            "当前方法行不通, 必须换一种思路: "
+                            "1) 重新用 file_read 读文件确认实际内容(不要凭记忆) "
+                            "2) 检查是否路径错误/文件不存在/依赖缺失 "
+                            "3) 考虑完全重写而非修补 "
+                            "4) 如果是环境问题, 先解决环境再跑代码"
+                        )
+                        self.consecutive_code_failures = 0  # 重置, 给新方法机会
+                    else:
+                        repair_hint = (
+                            f"\n\n[自修复闭环] 代码执行失败(第{fail_count}次)! "
+                            "你必须: 1) 仔细阅读上面的错误信息 "
+                            "2) 用 code_edit 精确修改出错的代码 "
+                            "3) 用 code_exec 重新验证 "
+                            "4) 重复直到通过, 不要直接放弃回答"
+                        )
+                    tool_result += repair_hint
+                try:
+                    diag = self.error_diagnoser.diagnose(
+                        tool_output=tool_result, tool_name=tool_name, tool_args=tool_args)
+                    diag_ctx = self.error_diagnoser.to_context_string(diag)
+                    tool_result += diag_ctx
+                    logger.log("nexus", "代码错误自动诊断",
+                               f"读取 {diag.get('files_examined', 0)} 个文件")
+                except Exception:
+                    if not is_code_tool:
+                        tool_result += (
+                            "\n\n[系统提示] 工具执行失败, 请检查参数。"
+                            "文件不存在先用 file_list 确认路径; "
+                            "代码错误用 code_edit 修正后再用 code_exec 验证; "
+                            "连续失败请换一种方法。")
+            # 代码工具成功时重置连续失败计数
+            if tool_name in ("code_exec", "code_edit", "file_write") and not self._is_tool_error(tool_result):
+                self.consecutive_code_failures = 0
+            logger.log("nexus", "工具返回", f"{tool_name}: {tool_result[:60]}")
+            if yield_event:
+                yield_event({"type": "tool_end", "name": tool_name,
+                             "result": tool_result[:200]})
+            return item["id"], tool_result
+
+        # ---- 并行执行无依赖的 ----
+        if independent:
+            max_workers = min(len(independent), 4)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(_run_one, item): item["id"]
+                           for item in independent}
+                for future in as_completed(futures):
+                    call_id, result = future.result()
+                    results_map[call_id] = result
+
+        # ---- 串行执行有依赖的 ----
+        for item in dependent:
+            call_id, result = _run_one(item)
+            results_map[call_id] = result
+
+        # ---- 按原始顺序返回 ----
+        return [(p["id"], p["name"], results_map.get(p["id"], "")) for p in parsed]
 
     @staticmethod
     def _is_tool_error(tool_result: str) -> bool:
@@ -88,6 +224,7 @@ class DecisionCore:
 - 查文件内容: 用 file_read, 不要用 code_exec 读文件
 - 列目录: 用 file_list, 不要用 code_exec 执行 ls
 - 原则: 一次 file_write + 一次 code_exec 验证 = 2次调用, 不要拆成8次 code_exec
+- 并行调用: 多个互不依赖的工具(同时读多个文件/同时搜索多关键词)在一次回复中同时发起, 框架自动并行执行, 不要串行一个个调
 
 【编码工作流】
 1. 理解: project_analyze 看项目结构 → code_search 找位置 → file_read 读文件
@@ -137,7 +274,14 @@ class DecisionCore:
 - 先给结论, 再给必要细节; 能一句话说清就不写三段
 - 用户问技术/概念可以解释, 但不要主动执行工程任务(写代码/改文件/跑命令)
 
-【可用工具】
+【
+## 工具使用效率规则 (必须遵守)
+1. **写文件优先用 file_write / code_edit**: 创建或修改文件时, 直接用 file_write 一次写完, 不要用 code_exec 反复试代码。写完后用 code_exec 验证一次即可。
+2. **错误自修复闭环**: code_exec 返回错误时, 先用 error_diagnoser 已提供的上下文理解问题, 然后用 code_edit 精确修改, 再用 code_exec 验证。最多重试 3 次, 3 次仍失败则换方案。
+3. **并行调用**: 多个互不依赖的工具(如同时读多个文件、同时搜索多个关键词)应在一次回复中同时发起, 框架会自动并行执行。不要一个一个串行调用。
+4. **先读后写**: 修改文件前必须先用 file_read 或 code_search 确认当前内容, 不要凭空覆盖。
+
+可用工具】
 - web_search: 查实时信息、新闻、资料
 - current_time: 看当前时间
 - 其他工具不要调用 (聊天模式不碰文件和代码)
@@ -211,6 +355,7 @@ class DecisionCore:
                    f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}")
         self.last_tools_used = []
         self.last_tool_errors = 0
+        self.consecutive_code_failures = 0
         self.error_diagnoser.reset()
         messages = self._build_messages(task, context, history_text)
         total_input = 0
@@ -245,43 +390,12 @@ class DecisionCore:
 
             if message.tool_calls and tool_call_count < self.max_tool_calls:
                 messages.append(message)
-                for tool_call in message.tool_calls:
-                    tool_name = tool_call.function.name
-                    self.last_tools_used.append(tool_name)
-                    try:
-                        tool_args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
-                        tool_args = {}
-                    logger.log("nexus", "调用工具",
-                               f"{tool_name}({json.dumps(tool_args, ensure_ascii=False)[:50]})")
-                    tool_result = self.tool_manager.execute(tool_name, **tool_args)
-                    # 工具结果截断, 防止撑爆上下文
-                    tool_result = truncate_tool_result(tool_result)
-                    # 错误时计数 + 自动诊断代码 + 注入相关文件上下文
-                    if self._is_tool_error(tool_result):
-                        self.last_tool_errors += 1
-                        try:
-                            diag = self.error_diagnoser.diagnose(
-                                tool_output=tool_result,
-                                tool_name=tool_name,
-                                tool_args=tool_args,
-                            )
-                            diag_ctx = self.error_diagnoser.to_context_string(diag)
-                            tool_result += diag_ctx
-                            logger.log("nexus", "代码错误自动诊断",
-                                       f"读取 {diag.get('files_examined', 0)} 个文件, "
-                                       f"错误 {len(diag.get('errors', []))} 个")
-                        except Exception as diag_err:
-                            tool_result += (
-                                "\n\n[系统提示] 工具执行失败, 请检查代码和参数。"
-                                "如果是文件不存在, 先用 file_list 确认路径; "
-                                "如果是语法错误, 修正后重试; 连续失败请换一种方法。"
-                            )
-                    logger.log("nexus", "工具返回",
-                               f"{tool_name}: {tool_result[:60]}")
+                # 批量执行工具调用 (自动并行无依赖的, 串行有依赖的)
+                batch_results = self._execute_tool_calls_batch(message.tool_calls)
+                for call_id, tool_name, tool_result in batch_results:
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": call_id,
                         "content": tool_result,
                     })
                 tool_call_count += 1
@@ -314,6 +428,7 @@ class DecisionCore:
                    f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}")
         self.last_tools_used = []
         self.last_tool_errors = 0
+        self.consecutive_code_failures = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
         messages = self._build_messages(task, context, history_text)
@@ -409,35 +524,22 @@ class DecisionCore:
                     })
                 messages.append(assistant_msg)
 
-                # 执行每个工具
-                for idx in sorted(tool_calls_buffer.keys()):
-                    tc = tool_calls_buffer[idx]
-                    tool_name = tc["name"]
-                    self.last_tools_used.append(tool_name)
-                    try:
-                        tool_args = json.loads(tc["args"]) if tc["args"] else {}
-                    except json.JSONDecodeError:
-                        tool_args = {}
-                    yield {"type": "tool_start", "name": tool_name,
-                           "args": json.dumps(tool_args, ensure_ascii=False)[:80]}
-                    logger.log("nexus", "调用工具",
-                               f"{tool_name}({json.dumps(tool_args, ensure_ascii=False)[:50]})")
-                    tool_result = self.tool_manager.execute(tool_name, **tool_args)
-                    # 错误时计数并附加重试提示
-                    if self._is_tool_error(tool_result):
-                        self.last_tool_errors += 1
-                        tool_result += (
-                            "\n\n[系统提示] 工具执行失败, 请检查参数是否正确。"
-                            "如果是文件不存在, 先用 file_list 确认路径; "
-                            "如果是参数错误, 修正后重试; 连续失败请换一种方法。"
-                        )
-                    logger.log("nexus", "工具返回",
-                               f"{tool_name}: {tool_result[:60]}")
-                    yield {"type": "tool_end", "name": tool_name,
-                           "result": tool_result[:200]}
+                # 批量执行工具调用 (自动并行, 流式输出事件)
+                batch_input = [
+                    {"id": tc["id"], "name": tc["name"], "args": tc["args"]}
+                    for tc in tool_calls_buffer.values()
+                ]
+                pending_events = []
+                batch_results = self._execute_tool_calls_batch(
+                    batch_input,
+                    yield_event=lambda e: pending_events.append(e)
+                )
+                for ev in pending_events:
+                    yield ev
+                for call_id, tool_name, tool_result in batch_results:
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tc["id"],
+                        "tool_call_id": call_id,
                         "content": tool_result,
                     })
 

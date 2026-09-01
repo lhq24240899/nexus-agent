@@ -23,7 +23,7 @@ from utils import temp_workspace
 from config import DATA_DIR, MODEL_ROUTING
 
 HISTORY_FILE = DATA_DIR / "conversation_history.json"
-MAX_HISTORY_TURNS = 6
+MAX_HISTORY_TURNS = 10
 
 # 强复杂信号: 只有命中这些词(或任务超长)才走完整双核流程(秘书四库检索+反思)。
 # 设计原则: 默认走快速通道 —— 决策核心本身就带全部工具, 写代码/查资料/解释类
