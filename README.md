@@ -15,12 +15,16 @@
 - Web 控制台（对话/日志/终端/四库/成本/Stats）
 - 工具系统（32 工具 + MCP + 插件）
 - 技能系统（自我改进 + 置信度 + 版本回滚）
-- 上下文压缩（80% 阈值 + LLM 摘要）
-- 临时工作目录 + 自动清理
-- SSE 流式输出（心跳 + 断线续传）
+- 上下文压缩（60% 阈值 + 工具结果截断 + LLM 摘要）
+- 失败拦截（检测到工具失败强制修复，禁止虚假成功）
+- 工具效率优化（禁止无意义探索/诊断内联/新文件不先读）
+- code_exec 超时杀进程树（防 Playwright 子进程挂起）
+- 临时工作目录 + 任务结束自动清理
+- SSE 流式输出（心跳 + 断线续传 + 中途输出拦截）
 - 任务统计 + 成本监控 + 账单校准
-- 并行执行 + 工具自动重试
-- IMA 腾讯笔记云端备份
+- 并行工具调用 + 依赖检查 + 错误自修复闭环
+- 经验→技能自动转化
+- IMA 腾讯笔记云端备份（追加模式滚动笔记）
 
 ---
 
@@ -272,20 +276,40 @@ python run.py --cli
 - **安全沙箱**：16 条危险命令黑名单 + ulimit 资源限制 + timeout（10s/30s/60s 三档）
 - 前端 Linux 面板和 `linux_terminal` 工具双重安全检查
 
-### 6.6 上下文压缩
+### 6.6 上下文压缩与性能优化
 
-- 对话历史达到上下文窗口 80% 时自动触发
-- 秘书核心用 LLM 摘要历史对话，保留关键信息
-- 压缩后继续对话，防止 token 溢出
-- 经验库超过 30 条时自动压缩合并（LLM 提炼 → 保留 10 条精华）
+**三层防护防止 token 爆炸：**
 
-### 6.7 IMA 云端备份
+1. **工具结果截断**：单条工具结果超过 2000 字符自动保留头尾截断，防止大段错误输出（如 Playwright 堆栈）撑爆上下文
+2. **实时 token 计数**：每次 API 调用前估算 messages 总 token
+3. **超阈值自动压缩**：达到上下文窗口 60% 时，秘书核心用 LLM 摘要早期对话，保留最近 2 轮工具调用
+
+**失败拦截机制：**
+- 最终回答前检查最后一个工具结果
+- 如果包含 `EXIT: 1`/错误/失败/超时，注入【失败拦截】提醒
+- 强制模型：分析错误 → code_edit 修复 → code_exec 验证，禁止直接报"已完成"
+
+**工具效率约束：**
+- 系统提示词明确禁止：无意义 file_list 探索、读旧 demo 代码当参考、写诊断脚本到 temp/
+- 要求：创建新文件直接 file_write，诊断用 code_exec 内联，一次 file_write + 一次 code_exec 验证 = 2次调用
+
+**code_exec 超时保护：**
+- `subprocess.Popen` + `communicate(timeout=)`，默认 15 秒最大 120 秒
+- 超时时 `taskkill /T /F /PID` 杀整个进程树（Playwright 的 Chromium 子进程也会死）
+- 防止浏览器挂起导致整个任务卡死
+
+**经验库压缩：**
+- 超过 30 条时自动 LLM 提炼合并，保留 10 条精华
+
+### 6.7 IMA 云端备份（追加模式）
 
 - 经验库新增条目后，异步同步到 IMA 腾讯笔记
+- **追加模式**：所有经验追加到同一个滚动笔记「Nexus经验日志」，不再每次创建新笔记
+- 首次同步自动创建笔记，note_id 缓存到 `data/ima_rolling_note.json`
+- 每条经验格式：`## [时间] 经验#ID → 任务摘要 → 正文 → ---`
 - 存入指定笔记本（默认 `nexus`），Markdown 格式
-- 单向只增不删（IMA API 无删除接口）
-- 同步失败不影响主流程，打日志继续
-- SQLite 仍是主存储，IMA 是云端备份
+- 追加失败兜底：退化为创建独立笔记，不丢数据
+- 单向只增不删，SQLite 仍是主存储，IMA 是云端备份
 
 ---
 
@@ -300,35 +324,39 @@ D:\nexus_agent\
 ├── requirements.txt        # Python 依赖
 ├── core/                   # 双核核心
 │   ├── dual_agent.py       # 总控: 秘书 → 决策 → 沉淀
-│   ├── decision_core.py    # 决策核心 Nexus (三模式temperature)
-│   └── secretary_core.py   # 秘书核心 (四库+预判+反思+IMA同步)
+│   ├── decision_core.py    # 决策核心 Nexus (三模式temperature + 失败拦截 + 并行工具)
+│   ├── secretary_core.py   # 秘书核心 (四库+预判+反思+IMA同步)
+│   └── context_manager.py  # 上下文压缩 (工具截断+60%阈值+LLM摘要)
 ├── libraries/              # 四库 + 向量检索
 │   ├── four_libraries.py   # 四库管理 (SQLite + 差异化权重)
 │   └── vector_store.py     # 向量存储 (embedding/TF-IDF)
 ├── system/                 # 系统层
 │   └── linux_embed.py      # 嵌入 Linux (WSL2/Docker/Mock)
 ├── tools/                  # 工具系统
-│   ├── base.py             # BaseTool 基类
-│   ├── safety.py           # 危险命令黑名单 + 资源限制
-│   ├── web_search.py       # 联网搜索
-│   ├── code_exec.py        # Python 代码执行
-│   ├── linux_terminal.py   # Linux 命令执行
+│   ├── base_tool.py        # BaseTool 基类
+│   ├── code_exec.py        # Python代码执行 (超时杀进程树)
+│   ├── code_edit.py        # 精确代码编辑
+│   ├── file_ops.py         # 文件读写
+│   ├── linux_terminal.py   # Linux命令执行 (黑名单+ulimit+timeout)
+│   ├── cleanup.py          # 临时文件清理
 │   └── providers.yaml      # 工具注册配置
 ├── mcp/                    # MCP 协议接入
 ├── plugins/                # 插件系统
-├── skills/                 # 技能系统 (自我改进)
+├── skills/                 # 技能系统 (自我改进, YAML格式)
 ├── integrations/           # 第三方集成
-│   └── ima_client.py       # IMA 腾讯笔记客户端
+│   └── ima_client.py       # IMA 腾讯笔记客户端 (追加模式)
 ├── ui/                     # Web 界面
 │   ├── web_ui.py           # Flask 后端 API
 │   └── templates/
 │       └── index.html      # 前端控制台
 ├── utils/                  # 工具
 │   ├── logger.py           # 结构化日志
-│   └── cost_tracker.py     # 成本监控 + 账单校准
+│   ├── cost_tracker.py     # 成本监控 + 账单校准
+│   └── temp_workspace.py   # 临时工作目录管理
 ├── data/                   # 运行时数据 (自动生成)
-│   └── nexus.db            # SQLite 四库数据库
-└── temp_workspace/         # 临时工作目录 (自动清理)
+│   ├── nexus.db            # SQLite 四库数据库
+│   └── conversation_history.json  # 对话历史 (按模式分)
+└── test_streaming_fix.py   # 回归测试
 ```
 
 ---
@@ -395,11 +423,12 @@ D:\nexus_agent\
 
 1. **精确代码编辑**：当前 code_exec 偏脚本执行，需增强文件级精确编辑
 2. **代码符号索引**：建立项目代码的 AST 索引，提升编码助手能力
-3. **并行工具调用**：当前工具串行执行，支持并行提升效率
-4. **经验→能力转化**：经验库不只是检索，能自动生成可复用技能
+3. ~~**并行工具调用**~~ ✅ 已实现（ThreadPoolExecutor + 依赖检查 + 结果按序组装）
+4. ~~**经验→能力转化**~~ ✅ 已实现（复杂任务后自动创建技能 YAML）
 5. **MCP 生态扩展**：接入更多 MCP 服务器（文件系统、数据库、浏览器）
 6. **本地模型**：Ollama 跑本地模型，完全离线零费用
 7. **安装包分发**：PyInstaller 打包，一键安装
+8. **桌面级 Linux GUI**：当前为命令行级 WSL2，视频原版为浏览器/文件管理器 GUI
 
 ---
 
