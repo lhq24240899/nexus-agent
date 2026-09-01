@@ -5,6 +5,7 @@
 """
 import time
 import json
+import threading
 import re
 from pathlib import Path
 from core.decision_core import DecisionCore
@@ -399,15 +400,18 @@ class DualCoreAgent:
                                           allowed_tools=allowed_tools)
             t3 = time.time()
             tools_used = self.decision.last_tools_used
-            self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
-            reflection = "(已按模式差异化沉淀)"
-            # 技能使用记录 + 自我改进
-            if matched_skill:
-                self._record_and_improve_skill(
-                    matched_skill, task, result, tools_used, t3 - t2,
-                    success=not self.decision.last_had_tool_error)
-            # 复杂任务自动创建技能
-            self._maybe_create_skill(task, result, tools_used)
+            reflection = "(秘书后台复盘中)"
+            def _bg_learn():
+                try:
+                    self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
+                    if matched_skill:
+                        self._record_and_improve_skill(
+                            matched_skill, task, result, tools_used, t3 - t2,
+                            success=not self.decision.last_had_tool_error)
+                    self._maybe_create_skill(task, result, tools_used)
+                except Exception as e:
+                    logger.log("secretary", "后台复盘失败", str(e))
+            threading.Thread(target=_bg_learn, daemon=True).start()
             secretary_time = round(t2 - t1, 2)
 
         t4 = time.time()
@@ -531,20 +535,30 @@ class DualCoreAgent:
             yield event
         decision_time = round(time.time() - t2, 2)
 
-        # 反思 (非流式, 快速通道/聊天模式跳过)
+        # 反思 (异步后台执行, 不阻塞流式返回; 快速通道/聊天模式跳过)
         reflection = "(轻量模式: 未启用反思与沉淀)" if is_light else "(快速通道: 未启用反思)"
         if not fast_path:
-            yield {"type": "status", "message": "秘书正在复盘..."}
             tools_used = self.decision.last_tools_used
-            self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
-            reflection = "(已按模式差异化沉淀)"
-            # 技能使用记录 + 自我改进 (与非流式路径对齐)
-            if matched_skill:
-                self._record_and_improve_skill(
-                    matched_skill, task, result, tools_used, decision_time,
-                    success=not self.decision.last_had_tool_error)
-            # 复杂任务自动创建技能
-            self._maybe_create_skill(task, result, tools_used)
+            reflection = "(秘书后台复盘中)"
+            def _background_learning():
+                try:
+                    # 自动清理本次任务的临时文件(诊断脚本/测试数据等)
+                    try:
+                        from utils import temp_workspace
+                        stats = temp_workspace.cleanup_temp()
+                        if stats.get('removed_files', 0) > 0:
+                            logger.log('system', '临时文件自动清理', '删除%d个文件, %d个目录, 释放%d字节' % (stats['removed_files'], stats['removed_dirs'], stats['freed_bytes']))
+                    except Exception as _e:
+                        pass
+                    self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
+                    if matched_skill:
+                        self._record_and_improve_skill(
+                            matched_skill, task, result, tools_used, decision_time,
+                            success=not self.decision.last_had_tool_error)
+                    self._maybe_create_skill(task, result, tools_used)
+                except Exception as e:
+                    logger.log("secretary", "后台复盘失败", str(e))
+            threading.Thread(target=_background_learning, daemon=True).start()
 
         total_time = round(time.time() - t0, 2)
 

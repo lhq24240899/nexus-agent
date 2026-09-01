@@ -67,11 +67,11 @@ class CodeEditTool(BaseTool):
     def __init__(self, code_index=None):
         self.code_index = code_index
     description = (
-        "精确编辑代码文件 (类似 Codex 的 search/replace)。支持多种编辑模式: "
-        "search_replace(搜索替换, 搜索文本必须唯一)、insert_after(在指定文本后插入)、"
-        "insert_before(在指定文本前插入)、delete_lines(删除行范围)、append(末尾追加)。"
-        "比 file_write 更安全, 只改指定部分, 不会覆盖整个文件。"
-        "编辑前会自动读取文件确认, 编辑后返回 diff。"
+        "精确编辑已有代码文件。支持search_replace(搜索替换,搜索文本必须唯一)、"
+        "insert_after/insert_before(插入)、delete_lines(删行)、append(追加)。"
+        "【何时用】小范围修改已有文件(改几行/加函数/修bug)。"
+        "【不要用】创建新文件用file_write；大段重写(超过50行)用file_write(先file_read读内容)；"
+        "search_replace搜索不到或不唯一时，先用file_read确认实际内容(注意空格/缩进/换行)，不要盲目重试。"
     )
     params_schema = {
         "type": "object",

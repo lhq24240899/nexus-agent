@@ -1,0 +1,45 @@
+confidence: 0.95
+consecutive_failures: 0
+description: 在指定位置创建并完善一个Playwright自动化演示项目，并将本地演示功能集成到主运行流程中
+improved_at: '2026-09-01 11:58:48'
+name: playwright_automation_demo_creation
+required_tools:
+- code_exec
+- file_list
+- code_exec
+- file_write
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- file_write
+- code_edit
+steps:
+- description: 初始化项目目录，检查并安装Playwright依赖
+  tool: code_exec
+- description: 编写核心自动化脚本或初始代码文件
+  tool: file_write
+- description: 运行脚本验证基本功能，排查错误
+  tool: code_exec
+- description: 添加本地演示函数或新的功能模块
+  tool: file_write
+- description: 编辑主入口，将本地演示函数接入run_all()调用链
+  tool: code_edit
+- description: 运行完整流程，验证集成后功能正常
+  tool: code_exec
+tags:
+- playwright
+- automation
+- demo
+- python
+- workflow
+trigger:
+  keywords:
+  - playwright
+  - 自动化
+  - demo
+  - 演示
+  - 项目搭建
+  - run_all
+  patterns: []
+version: 3

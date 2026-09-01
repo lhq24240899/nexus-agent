@@ -197,7 +197,7 @@ class SecretaryCore:
         result = list(selected)[:12]
         return result if result else None
 
-    def reflect(self, task: str, result: str, context: str, mode: str = "work") -> str:
+    def reflect(self, task: str, result: str, context: str, mode: str = "work", append_to_id: int = None) -> str:
         """
         经验反思: 任务完成后复盘, 提炼可复用经验
         """
@@ -227,13 +227,26 @@ class SecretaryCore:
             )
             # 把有价值的反思存入经验库
             if reflection and "无特别需要反思" not in reflection:
-                item = self.libs.experience.add(
-                    f"[反思] 任务: {task[:60]}\n经验: {reflection[:300]}",
-                    meta={"type": "reflection"},
-                    mode=mode,
-                )
-                logger.log("secretary", "反思完成", "已存入经验库")
-                self._sync_to_ima(item, task)
+                reflection_text = f"\n\n---\n\n[反思复盘]\n{reflection[:500]}"
+                if append_to_id:
+                    # 合并到 task_result 条目, 不新建
+                    ok = self.libs.experience.append_content(append_to_id, reflection_text)
+                    if ok:
+                        logger.log("secretary", "反思完成", f"已合并到经验库#{append_to_id}")
+                    else:
+                        # 追加失败, 降级为新建
+                        item = self.libs.experience.add(
+                            f"[反思] 任务: {task[:60]}\n经验: {reflection[:300]}",
+                            meta={"type": "reflection"}, mode=mode,
+                        )
+                        self._sync_to_ima(item, task)
+                else:
+                    item = self.libs.experience.add(
+                        f"[反思] 任务: {task[:60]}\n经验: {reflection[:300]}",
+                        meta={"type": "reflection"}, mode=mode,
+                    )
+                    logger.log("secretary", "反思完成", "已存入经验库")
+                    self._sync_to_ima(item, task)
             else:
                 logger.log("secretary", "反思完成", "无特别需要反思的内容")
             return reflection
@@ -308,10 +321,11 @@ class SecretaryCore:
 
     def _learn_work(self, task, result, context, tools_used):
         """Work模式: 经验+工具技巧+任务记录+用户偏好"""
-        # 1. 经验库: 任务结果
-        self.record_result(task, result, tools_used=tools_used, mode="work")
-        # 2. 经验库: 反思
-        self.reflect(task, result, context, mode="work")
+        # 1. 经验库: 任务结果 (拿到 item_id, 后续反思合并到同一条)
+        result_item = self.record_result(task, result, tools_used=tools_used, mode="work")
+        result_id = result_item.get("id") if isinstance(result_item, dict) else None
+        # 2. 经验库: 反思 (合并到 task_result 条目, 不新建)
+        self.reflect(task, result, context, mode="work", append_to_id=result_id)
         # 3. 工具库: 从工具使用中提炼技巧
         if tools_used:
             self._learn_tool_tips(tools_used, task, result)
@@ -393,13 +407,17 @@ class SecretaryCore:
             )
             prefs = resp.choices[0].message.content.strip()
             if prefs and "无明确偏好" not in prefs:
+                added = 0
                 for line in prefs.split("\n"):
                     line = line.strip().lstrip("-*0123456789. ")
                     if line and len(line) > 3:
-                        self.libs.memory.add(
-                            line, meta={"type": "user_preference", "mode": mode},
-                        )
-                logger.log("secretary", "用户偏好提取", f"模式: {mode}")
+                        # 去重: 检查记忆库是否已有相似内容(前20字匹配)
+                        if not self._memory_exists(line):
+                            self.libs.memory.add(
+                                line, meta={"type": "user_preference", "mode": mode},
+                            )
+                            added += 1
+                logger.log("secretary", "用户偏好提取", f"模式: {mode}, 新增{added}条(已去重)")
         except Exception as e:
             logger.log("secretary", "偏好提取失败", str(e))
 
@@ -438,6 +456,21 @@ class SecretaryCore:
         prefix = text[:30]
         for item in self.libs.knowledge.all():
             if prefix in item.get("content", ""):
+                return True
+        return False
+
+    def _memory_exists(self, text: str) -> bool:
+        """简单去重: 检查记忆库是否已有相似内容(前20字匹配, 只查user_preference类型)"""
+        prefix = text[:20]
+        for item in self.libs.memory.all():
+            meta = item.get("meta", {})
+            if isinstance(meta, str):
+                try:
+                    import json as _json
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            if meta.get("type") == "user_preference" and prefix in item.get("content", ""):
                 return True
         return False
 
@@ -680,6 +713,7 @@ class SecretaryCore:
                        f"经验库 {len(self.libs.experience)} 条达阈值")
             self.compact_experience_async()
         self._sync_to_ima(item, task)
+        return item
 
     def seed_demo_data(self) -> dict:
         """预置实用示例数据 (幂等: 四库已有任何内容则跳过, 防止重复灌入)"""

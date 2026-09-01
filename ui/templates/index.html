@@ -105,7 +105,7 @@
     border: none; border-top: 1px solid #30363d; margin: 12px 0;
   }
   .msg.nexus .bubble strong { color: #f0f6fc; }
-  .msg .meta { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  .msg .meta { font-size: 11px; color: #8b949e; margin-top: 4px; word-wrap: break-word; overflow-wrap: break-word; white-space: normal; line-height: 1.5; }
   /* ============ Markdown 渲染样式 ============ */
   .bubble h1, .bubble h2, .bubble h3, .bubble h4 {
     margin: 12px 0 8px 0;
@@ -1204,6 +1204,11 @@ async function sendMessage() {
             bubble.textContent = '';
           }
           fullText += event.content;
+          bubble.textContent = fullText;
+          document.getElementById('chat-messages').scrollTop = 999999;
+        } else if (event.type === 'replace_content') {
+          // 强制总结: 替换气泡内容
+          fullText = event.content;
           bubble.textContent = fullText;
           document.getElementById('chat-messages').scrollTop = 999999;
         } else if (event.type === 'tool_start') {

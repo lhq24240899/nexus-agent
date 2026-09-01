@@ -32,7 +32,8 @@ class CodeExecTool(BaseTool):
         "代码在临时环境中运行，执行后临时文件会被删除。"
         "支持中文输出(UTF-8)，Windows 下不会乱码。"
         "【重要】不要用此工具创建/写入持久文件，写文件请用 file_write 工具。"
-        "有 15 秒超时限制，危险代码会被拦截。"
+        "【重要】安装依赖(pip install/npm install)、下载、编译等长命令请用 linux_terminal 工具，不要用 code_exec。"
+        "默认 15 秒超时，可通过 timeout 参数延长(最大120秒)，危险代码会被拦截。"
     )
     params_schema = {
         "type": "object",
@@ -40,12 +41,17 @@ class CodeExecTool(BaseTool):
             "code": {
                 "type": "string",
                 "description": "要执行的 Python 代码",
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "超时秒数，默认15，最大120。仅用于确实需要长时间的计算任务，安装命令请用linux_terminal。",
+                "default": 15,
             }
         },
         "required": ["code"],
     }
 
-    def execute(self, code: str = "", **kwargs) -> str:
+    def execute(self, code: str = "", timeout: int = 15, **kwargs) -> str:
         # 修复: 处理 code 为 None 的情况
         if code is None:
             return "错误: code 参数为空 (null), 请提供要执行的 Python 代码"
@@ -65,33 +71,67 @@ class CodeExecTool(BaseTool):
             ) as f:
                 f.write(code)
                 tmp_path = f.name
+            # 2. 子进程执行 + 超时兜底(杀整个进程树, 防止Playwright等子进程挂起)
+            python_exe = sys.executable or "python"
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            effective_timeout = max(1, min(int(timeout), 120))
+            proc = None
             try:
-                # 2. 子进程执行 + 超时兜底
-                # 使用当前 Python 解释器, 避免 PATH 问题
-                python_exe = sys.executable or "python"
-                # 强制 UTF-8 编码, 解决 Windows GBK 中文乱码
-                env = os.environ.copy()
-                env["PYTHONIOENCODING"] = "utf-8"
-                env["PYTHONUTF8"] = "1"
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     [python_exe, tmp_path],
-                    capture_output=True, text=True, timeout=15,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     encoding="utf-8", errors="replace",
                     env=env,
                     creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
                 )
-                output = result.stdout or ""
-                if result.stderr:
-                    output += f"\n[stderr]\n{result.stderr}"
-                if result.returncode != 0:
-                    output += f"\n[退出码: {result.returncode}]"
-                return output if output.strip() else "(代码执行完成, 无输出)"
+                try:
+                    stdout, stderr = proc.communicate(timeout=effective_timeout)
+                    output = stdout or ""
+                    if stderr:
+                        output += f"\n[stderr]\n{stderr}"
+                    if proc.returncode != 0:
+                        output += f"\n[退出码: {proc.returncode}]"
+                    return output if output.strip() else "(代码执行完成, 无输出)"
+                except subprocess.TimeoutExpired:
+                    # 超时: 杀整个进程树(Windows用taskkill /T, Unix用killpg)
+                    self._kill_process_tree(proc)
+                    try:
+                        stdout, stderr = proc.communicate(timeout=3)
+                    except Exception:
+                        stdout, stderr = "", ""
+                    extra = ""
+                    if stderr:
+                        extra = f" 最后输出: {stderr[:200]}"
+                    return (f"错误: 代码执行超时 ({effective_timeout}秒限制, 已强制终止进程树。"
+                            f"可能是死循环/浏览器挂起/计算量过大。安装依赖请用linux_terminal，"
+                            f"或增大timeout参数){extra}")
             finally:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-        except subprocess.TimeoutExpired:
-            return "错误: 代码执行超时 (15秒限制，可能是死循环或计算量过大)"
         except Exception as e:
             return f"执行失败: {type(e).__name__}: {str(e)}"
+
+    @staticmethod
+    def _kill_process_tree(proc):
+        """杀整个进程树, 防止子进程(如Chromium)挂起"""
+        try:
+            if sys.platform == "win32":
+                # Windows: taskkill /T /F /PID 杀进程树
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                    capture_output=True, timeout=5,
+                )
+            else:
+                # Unix: 杀进程组
+                import signal
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            # 兜底: 只杀父进程
+            try:
+                proc.kill()
+            except Exception:
+                pass

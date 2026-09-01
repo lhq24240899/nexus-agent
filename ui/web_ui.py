@@ -43,6 +43,18 @@ def create_app() -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.route("/favicon.ico")
+    def favicon():
+        # SVG 图标: 深色背景 + 白色对勾, 类似 Nexus 风格
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+            '<rect width="64" height="64" rx="12" fill="#1a1a2e"/>'
+            '<path d="M18 33 L28 43 L46 22" stroke="#00d4aa" stroke-width="5" '
+            'fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+            '</svg>'
+        )
+        return svg, 200, {"Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400"}
+
     # ============ 对话 ============
     @app.route("/api/chat", methods=["POST"])
     def chat():

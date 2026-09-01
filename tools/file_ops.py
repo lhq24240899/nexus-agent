@@ -27,7 +27,7 @@ def _is_allowed(path: str) -> bool:
 
 class FileReadTool(BaseTool):
     name = "file_read"
-    description = "读取本地文件内容。支持文本文件 (txt, py, md, json, csv 等)。"
+    description = "读取本地文件内容。支持文本文件(txt/py/md/json/csv等)。【何时用】需要查看文件内容时。【不要用】不要用code_exec执行open()读文件，不要用linux_terminal执行cat读文件。大文件先用file_list确认大小。"
     params_schema = {
         "type": "object",
         "properties": {
@@ -62,7 +62,7 @@ class FileReadTool(BaseTool):
 
 class FileWriteTool(BaseTool):
     name = "file_write"
-    description = "写入内容到本地文件。如果文件存在会覆盖。写入后自动更新代码符号索引。"
+    description = "写入内容到本地文件。如果文件存在会覆盖。写入后自动更新代码符号索引。【何时用】创建新文件、大段重写已有文件。【不要用】不要用code_exec写持久文件(code_exec是临时环境,写完就删)。小修改用code_edit,不要整个文件重写。写之前必须先用file_read确认文件内容(避免覆盖)。"
 
     def __init__(self, code_index=None):
         self.code_index = code_index
@@ -94,7 +94,7 @@ class FileWriteTool(BaseTool):
 
 class FileListTool(BaseTool):
     name = "file_list"
-    description = "列出目录下的文件和子目录。"
+    description = "列出目录下的文件和子目录。【何时用】查看项目结构、确认文件是否存在。【不要用】不要用code_exec执行os.listdir()，不要用linux_terminal执行ls/dir。"
     params_schema = {
         "type": "object",
         "properties": {

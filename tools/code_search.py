@@ -61,8 +61,10 @@ def _is_symbol_query(pattern: str) -> bool:
 class CodeSearchTool(BaseTool):
     name = "code_search"
     description = (
-        "在项目中搜索代码。符号名(函数/类/变量)走索引秒查, 文本内容走 grep。"
-        "用于查找函数定义、变量引用、特定代码片段。"
+        "在代码库中搜索符号(函数/类/变量)或文本。符号走索引秒查，文本走grep。"
+        "【何时用】找函数定义在哪、找变量在哪被使用、搜索错误信息相关代码。"
+        "【不要用】读具体文件内容用file_read；列目录用file_list。"
+        "索引未覆盖的文件可能搜不到，此时用file_read。"
     )
     params_schema = {
         "type": "object",

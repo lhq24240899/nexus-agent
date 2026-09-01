@@ -5,6 +5,7 @@
 支持流式输出 (SSE)
 """
 import json
+import re
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -29,7 +30,7 @@ class DecisionCore:
         self.temperature = DECISION_CONFIG["temperature"]
         self.configured = bool(DECISION_CONFIG["api_key"])
         self.tool_manager = tool_manager
-        self.max_tool_calls = 8
+        self.max_tool_calls = 12
         self.last_tools_used: list[str] = []
         # 本轮决策中工具执行失败的次数 (成功判定依据, 每次 decide 开头重置)
         self.last_tool_errors = 0
@@ -64,6 +65,111 @@ class DecisionCore:
         if self.mode == "chat":
             return 0.5
         return self.temperature  # work 默认 0.7
+    def _validate_tool_call(self, tool_name: str, args: dict) -> str | None:
+        """工具调用校验. 返回 None 表示通过, 返回字符串表示拦截原因(作为工具结果返回给模型)"""
+        # code_exec 误用检测
+        if tool_name == "code_exec":
+            code = (args.get("code") or "")
+            # 检测安装命令
+            if any(k in code for k in ["pip install", "npm install", "playwright install", "apt install", "brew install"]):
+                return ("[工具校验拦截] code_exec 不适合安装命令(只有15秒超时, 安装必然超时)。\n"
+                        "请改用 linux_terminal 工具执行安装命令。")
+            # 检测用 code_exec 写持久文件
+            if re.search(r'open\s*\([^)]*[\'\"](w|a)[\'\"]', code):
+                if "tempfile" not in code and "tmp" not in code.lower():
+                    return ("[工具校验拦截] code_exec 是临时环境(执行完就删), 不适合写持久文件。\n"
+                            "请改用 file_write 工具写文件。")
+            # 检测用 code_exec 读文件
+            if any(k in code for k in [".read()", ".readlines()", "for line in open"]):
+                if "tempfile" not in code:
+                    return ("[工具校验拦截] 读文件请用 file_read 工具, 不要用 code_exec 执行 open().read()。")
+        # linux_terminal 误用检测
+        elif tool_name == "linux_terminal":
+            cmd = (args.get("command") or "")
+            if re.match(r'^\s*(cat|less|more|head|tail)\s+', cmd):
+                return "[工具校验拦截] 读文件请用 file_read 工具, 不要用 linux_terminal 执行 cat/less/head。"
+            if re.match(r'^\s*(ls|dir)\s*$', cmd) or re.match(r'^\s*ls\s+-', cmd):
+                return "[工具校验拦截] 列目录请用 file_list 工具, 不要用 linux_terminal 执行 ls。"
+            if re.match(r'^\s*python\s+-c', cmd):
+                return "[工具校验拦截] 执行 Python 代码请用 code_exec 工具(有危险代码检测和超时保护)。"
+        return None
+
+    # 中途过程语言特征 (中英文, 出现这些词说明输出的是过程而非结论)
+    MID_PROCESS_PATTERNS = [
+        # 中文
+        "现在把", "接下来", "然后把", "下一步", "接着", "现在需要",
+        "现在要", "然后再", "之后", "先把", "准备", "开始",
+        "接入", "整合", "继续", "再来", "再把", "现在写",
+        # 英文 (不区分大小写, 在 _is_mid_process 中 lower() 比较)
+        "now let me", "let me ", "next,", "then,", "i'll ", "i will ",
+        "now i ", "next i ", "then i ", "let's ", "i should", "i need to",
+        "time to", "going to", "first,", "now,", "next step", "then i'll",
+        "let me now", "i am going", "i'm going", "time for",
+    ]
+
+    def _is_mid_process(self, text: str) -> bool:
+        """检测输出是否为中途过程而非最终结论"""
+        if not text or len(text) > 500:
+            return False  # 长文本大概率是结论
+        text = text.strip()
+        text_lower = text.lower()
+        # 以中途语言开头或前30字包含过渡词 (英文不区分大小写)
+        for pat in self.MID_PROCESS_PATTERNS:
+            if text_lower.startswith(pat) or pat in text_lower[:30]:
+                return True
+        # 极短(<20字)且无结论性词汇, 大概率是没说完
+        if len(text) < 20:
+            conclusion_words = ["完成", "已创建", "已实现", "已生成", "总结", "结果", "成功",
+                                "Done", "created", "=", "是", "的", "好", "对", "可以"]
+            if not any(w in text for w in conclusion_words):
+                return True
+        return False
+
+    def _force_final_summary(self, task: str, messages: list) -> str:
+        """强制生成最终结论 (当检测到中途输出时调用)
+        注意: 不传递原始 messages(含 tool 消息会导致API 400), 而是提取关键信息构造干净请求
+        """
+        try:
+            # 从 messages 中提取工具使用记录和最后结果, 构造干净的摘要上下文
+            tool_summary = []
+            last_result = ""
+            for m in messages:
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    for tc in m["tool_calls"]:
+                        fname = tc.get("function", {}).get("name", "")
+                        fargs = tc.get("function", {}).get("arguments", "")[:80]
+                        tool_summary.append(f"{fname}({fargs})")
+                elif m.get("role") == "tool":
+                    content = m.get("content", "")[:100]
+                    tool_summary.append(f"结果: {content}")
+                elif m.get("role") == "assistant" and m.get("content"):
+                    last_result = m["content"][:200]
+            tools_text = "\n".join(tool_summary[-10:]) if tool_summary else "无"
+            resp = self.client.chat.completions.create(
+                model=self._active_model(),
+                temperature=0.3,
+                max_tokens=800,
+                messages=[
+                    {"role": "system", "content": "你是编程助手, 只输出最终结论, 不要描述过程。"},
+                    {"role": "user", "content": (
+                        f"【任务】{task[:200]}\n\n"
+                        f"【执行过程中调用的工具】\n{tools_text}\n\n"
+                        f"【模型最后输出】{last_result}\n\n"
+                        "请直接输出最终结论:\n"
+                        "1. 做了什么(创建/修改了哪些文件, 路径是什么)\n"
+                        "2. 关键结果或代码片段\n"
+                        "3. 如何运行/验证\n"
+                        "简洁回答, 先结论后细节。"
+                    )},
+                ],
+            )
+            result = resp.choices[0].message.content.strip()
+            logger.log("nexus", "强制总结", f"原输出{len(last_result)}字 → 结论{len(result)}字")
+            return result
+        except Exception as e:
+            logger.log("nexus", "强制总结失败", str(e)[:200])
+            return ""
+
     def _execute_tool_calls_batch(self, tool_calls: list, yield_event=None) -> list:
         """
         批量执行工具调用, 自动并行无依赖的调用.
@@ -126,10 +232,16 @@ class DecisionCore:
                              "args": json.dumps(tool_args, ensure_ascii=False)[:80]})
             logger.log("nexus", "调用工具",
                        f"{tool_name}({json.dumps(tool_args, ensure_ascii=False)[:50]})")
-            try:
-                tool_result = self.tool_manager.execute(tool_name, **tool_args)
-            except Exception as e:
-                tool_result = f"[工具执行异常] {type(e).__name__}: {e}"
+            # 方案3: 工具调用前校验, 拦截误用
+            validation_error = self._validate_tool_call(tool_name, tool_args)
+            if validation_error:
+                tool_result = validation_error
+                logger.log("nexus", "工具校验拦截", f"{tool_name}: {validation_error[:60]}")
+            else:
+                try:
+                    tool_result = self.tool_manager.execute(tool_name, **tool_args)
+                except Exception as e:
+                    tool_result = f"[工具执行异常] {type(e).__name__}: {e}"
             tool_result = truncate_tool_result(tool_result)
             if self._is_tool_error(tool_result):
                 self.last_tool_errors += 1
@@ -217,14 +329,18 @@ class DecisionCore:
 - 最终回答只给结果: 改了什么、验证结果、关键代码, 不要描述过程
 - 简单问题直接给答案, 不废话; 先结论后细节
 
-【工具选择原则 —— 减少无效调用】
+【工具选择原则 —— 减少无效调用, 违反则浪费token】
 - 写文件/创建脚本: 必须用 file_write 一次写完, 绝对不要用 code_exec 反复试写
 - code_exec 只用于运行验证(跑测试/看输出), 不用于创建文件
 - 修改已有文件: 小改用 code_edit, 大改用 file_write(先 file_read 读内容)
 - 查文件内容: 用 file_read, 不要用 code_exec 读文件
 - 列目录: 用 file_list, 不要用 code_exec 执行 ls
+- 安装依赖(pip install/npm install/playwright install)、下载、编译等长命令: 必须用 linux_terminal, 绝对不要用 code_exec(code_exec只有15秒超时, 安装命令必然超时)
 - 原则: 一次 file_write + 一次 code_exec 验证 = 2次调用, 不要拆成8次 code_exec
 - 并行调用: 多个互不依赖的工具(同时读多个文件/同时搜索多关键词)在一次回复中同时发起, 框架自动并行执行, 不要串行一个个调
+- 【禁止无意义探索】创建新文件/新项目时, 绝对不要 file_list 列无关目录(如D盘根目录), 绝对不要 file_read 读旧项目/旧demo代码当参考, 用户给了路径就直接写
+- 【诊断用内联】排查问题时用 code_exec 直接写诊断代码运行, 绝对不要 file_write 写诊断脚本到temp/目录(浪费一次调用且留垃圾文件)
+- 【创建新文件不需要先读】用户要求创建新文件时, 直接 file_write, 不需要先 file_read 确认不存在
 
 【编码工作流】
 1. 理解: project_analyze 看项目结构 → code_search 找位置 → file_read 读文件
@@ -336,11 +452,43 @@ class DecisionCore:
         return [f for f in all_funcs
                 if f.get("function", {}).get("name") in allowed]
 
+    def _build_dynamic_rules(self, task: str) -> str:
+        """根据任务关键词动态注入相关规则, 不相关的不注入, 节省token"""
+        rules = []
+        t = task.lower()
+
+        # 安装/下载/编译类任务
+        if any(k in t for k in ["install", "安装", "pip", "npm", "下载", "compile", "编译", "playwright", "依赖"]):
+            rules.append("安装依赖/下载/编译必须用 linux_terminal, 绝对不要用 code_exec(只有15秒超时)")
+
+        # 创建/写文件类任务
+        if any(k in t for k in ["创建", "写", "生成", "create", "write", "实现", "搭建", "新建", "demo", "脚本"]):
+            rules.append("写文件/创建脚本必须用 file_write 一次写完, 绝对不要用 code_exec 反复试写")
+            rules.append("修改已有文件: 小改用 code_edit, 大改用 file_write(先 file_read 读内容)")
+
+        # 多文件/批量任务
+        if any(k in t for k in ["多个", "同时", "批量", "multi", "所有", "全部文件"]):
+            rules.append("多个互不依赖的工具(同时读多个文件/同时搜索多关键词)在一次回复中同时发起, 框架自动并行执行")
+
+        # 搜索/调研类任务
+        if any(k in t for k in ["搜索", "search", "调研", "查一下", "最新", "新闻", "股价", "行情"]):
+            rules.append("需要实时信息用 web_search, 本地代码问题用 code_search/file_read, 不要混淆")
+
+        # 读文件/查内容类任务
+        if any(k in t for k in ["读", "read", "查看", "看一下", "内容", "文件里"]):
+            rules.append("读文件用 file_read, 列目录用 file_list, 不要用 code_exec 或 linux_terminal 做这些")
+
+        if not rules:
+            return ""
+        return "\n【动态规则】\n" + "\n".join(f"- {r}" for r in rules)
+
     def _build_messages(self, task, context, history_text):
         history_section = f"\n\n【历史对话】\n{history_text}" if history_text else ""
+        dynamic_rules = self._build_dynamic_rules(task)
         user_content = (
             f"【任务】\n{task}\n\n"
             f"【秘书递达的上下文】\n{context}"
+            f"{dynamic_rules}"
             f"{history_section}"
         )
         return [
@@ -393,15 +541,39 @@ class DecisionCore:
                 # 批量执行工具调用 (自动并行无依赖的, 串行有依赖的)
                 batch_results = self._execute_tool_calls_batch(message.tool_calls)
                 for call_id, tool_name, tool_result in batch_results:
+                    # 工具结果截断: 防止大段错误输出撑爆上下文
+                    from core.context_manager import truncate_tool_result
+                    truncated = truncate_tool_result(tool_result)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": call_id,
-                        "content": tool_result,
+                        "content": truncated,
                     })
                 tool_call_count += 1
                 continue
 
+            # 工具调用达上限: 注入最终结论提醒, 再请求一次
+            if tool_call_count >= self.max_tool_calls and not any(
+                m.get("content", "").startswith("【最终结论提醒】") for m in messages[-3:]
+            ):
+                messages.append(message)
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【最终结论提醒】工具调用次数已用完。"
+                        "你必须输出最终结论, 绝对不要输出中间过程或下一步计划。"
+                        "结论格式: 1)做了什么 2)关键文件/代码 3)如何验证。简洁先给结果。"
+                    ),
+                })
+                continue
+
             result = (message.content or "").strip()
+            # 检测是否为中途过程, 是则强制总结
+            if self._is_mid_process(result):
+                logger.log("nexus", "检测到中途输出(非流式)", f"原输出: {result[:50]}")
+                summary = self._force_final_summary(task, messages)
+                if summary:
+                    result = summary
             cost_tracker.record(
                 model=self.model,
                 input_tokens=total_input,
@@ -493,9 +665,33 @@ class DecisionCore:
 
             # 判断本轮是否会执行工具
             will_execute_tools = bool(tool_calls_buffer) and tool_call_count < self.max_tool_calls
-            # 不执行工具时(最终回答或达到工具上限), 输出文本
+            # 工具调用次数已达上限: 检查是否已注入最终结论提醒
+            last_msg_content = ""
+            if messages and isinstance(messages[-1], dict):
+                last_msg_content = messages[-1].get("content") or ""
+            at_limit = tool_call_count >= self.max_tool_calls
+            reminder_injected = "【最终结论提醒】" in last_msg_content
+            if at_limit and not reminder_injected:
+                # 达到上限且未注入提醒: 注入提醒, 丢弃本轮内容, 重新生成
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【最终结论提醒】工具调用次数已用完。"
+                        "你必须输出最终结论, 绝对不要输出中间过程或下一步计划。"
+                        "结论格式: 1)做了什么(创建/修改了哪些文件,路径是什么) "
+                        "2)关键结果或代码 3)如何运行/验证。简洁先给结果。"
+                    ),
+                })
+                content_parts = []
+                tool_calls_buffer = {}
+                logger.log("nexus", "达到工具上限", "注入最终结论提醒, 重新生成")
+                continue
+            # 缓冲模式: 达到上限且已注入提醒时, 不直接输出token, 先缓冲检测
+            # 防止模型忽略提醒仍输出中途过程
+            buffering = at_limit and reminder_injected
+            # 不执行工具时(最终回答), 输出文本
             # 执行工具时, content_parts 是思考过程, 丢弃不输出
-            if not will_execute_tools:
+            if not will_execute_tools and not buffering:
                 for part in content_parts:
                     yield {"type": "token", "content": part}
 
@@ -537,10 +733,13 @@ class DecisionCore:
                 for ev in pending_events:
                     yield ev
                 for call_id, tool_name, tool_result in batch_results:
+                    # 工具结果截断: 防止大段输出撑爆上下文
+                    from core.context_manager import truncate_tool_result
+                    truncated = truncate_tool_result(tool_result)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": call_id,
-                        "content": tool_result,
+                        "content": truncated,
                     })
 
                 tool_call_count += 1
@@ -549,6 +748,42 @@ class DecisionCore:
 
             # 没有工具调用, 这是最终回答
             full_result = "".join(content_parts).strip()
+            # 失败拦截: 如果最后一个工具结果是失败/错误, 不允许直接报成功
+            last_tool_failed = False
+            for m in reversed(messages):
+                if m.get("role") == "tool":
+                    tc = m.get("content", "")
+                    if "EXIT: 1" in tc or "错误:" in tc or "失败" in tc or "TimeoutExpired" in tc:
+                        last_tool_failed = True
+                    break
+            if last_tool_failed and not reminder_injected:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【失败拦截】上一次工具执行失败了(退出码非0或有错误)。"
+                        "你绝对不能在回答中说'已完成/已成功/验证通过'。"
+                        "你必须: 1)分析错误原因 2)用code_edit修复 3)再用code_exec验证直到成功 "
+                        "4)如果无法修复, 如实告诉用户卡在哪里、错误信息是什么。"
+                        "现在继续修复, 不要总结。"
+                    ),
+                })
+                logger.log("nexus", "失败拦截", "检测到上次工具失败, 注入修复提醒")
+                content_parts = []
+                continue
+            # 缓冲模式或检测到中途过程: 强制总结后输出
+            need_summary = buffering or self._is_mid_process(full_result)
+            if need_summary and full_result:
+                logger.log("nexus", "强制总结", f"原因: {'缓冲模式' if buffering else '检测到中途输出'}, 原输出: {full_result[:50]}")
+                summary = self._force_final_summary(task, messages)
+                if summary:
+                    full_result = summary
+            # 缓冲模式下: 之前没输出token, 现在输出最终结果
+            if buffering:
+                for char in full_result:
+                    yield {"type": "token", "content": char}
+            elif need_summary:
+                # 非缓冲模式但检测到中途输出: 发送替换事件
+                yield {"type": "replace_content", "content": full_result}
             self.last_input_tokens = total_input
             self.last_output_tokens = total_output
             cost_tracker.record(

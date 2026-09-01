@@ -7,7 +7,7 @@ from config import SEARCH_CONFIG
 
 class WebSearchTool(BaseTool):
     name = "web_search"
-    description = "搜索互联网获取实时信息。当你需要查找最新资讯、事实数据、或不确定的信息时使用。"
+    description = "联网搜索信息。支持多搜索引擎(Serper/Baidu/Tavily)。【何时用】需要实时信息(新闻/股价/最新文档)、不确定的事实核查、查找API用法。【不要用】本地代码问题用code_search/file_read；数学计算用code_exec；已知信息直接回答不要搜索。搜索结果是摘要，需要详细内容时用http_request抓取具体网页。"
     params_schema = {
         "type": "object",
         "properties": {

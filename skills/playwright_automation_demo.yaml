@@ -1,0 +1,44 @@
+confidence: 0.65
+consecutive_failures: 0
+description: 在指定位置创建并运行Playwright自动化演示项目，包括安装依赖、编写脚本、执行测试。
+improved_at: ''
+name: playwright_automation_demo
+required_tools:
+- code_exec
+- file_list
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+steps:
+- description: 检查目标路径（如D盘）是否存在，若不存在则创建项目目录。
+  tool: code_exec
+- description: 安装Playwright库（如pip install playwright）及所需浏览器驱动。
+  tool: code_exec
+- description: 编写Playwright自动化演示Python脚本，内容可包含打开网页、执行操作、截图等。
+  tool: code_exec
+- description: 列出项目目录结构，确认脚本及相关文件正确创建。
+  tool: file_list
+- description: 运行Playwright脚本执行自动化演示任务。
+  tool: code_exec
+- description: 查看运行输出或生成的截图/日志，验证自动化是否成功。
+  tool: code_exec
+tags:
+- playwright
+- 自动化
+- demo
+- python
+- 浏览器自动化
+trigger:
+  keywords:
+  - playwright
+  - 自动化演示
+  - 浏览器自动化
+  - python
+  - demo
+  - 测试脚本
+  patterns: []
+version: 1

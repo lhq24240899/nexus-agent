@@ -1,0 +1,23 @@
+description: 编写Python脚本保存到指定路径并运行验证输出
+improved_at: ''
+name: python_script_write_and_run
+required_tools:
+- file_write
+- code_exec
+steps:
+- description: 编写Python代码实现目标功能（如计算斐波那契数列），包含主输出逻辑，保存到指定文件路径
+  tool: file_write
+- description: 运行保存的Python脚本，检查退出码及输出结果是否符合预期
+  tool: code_exec
+tags:
+- python
+- 脚本编写
+- 验证
+trigger:
+  keywords:
+  - python脚本
+  - 保存并运行
+  - 验证输出
+  - 斐波那契
+  patterns: []
+version: 1

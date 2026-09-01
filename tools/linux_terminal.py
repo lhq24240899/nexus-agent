@@ -9,8 +9,12 @@ from tools.safety import is_dangerous, build_safe_command
 class LinuxTerminalTool(BaseTool):
     name = "linux_terminal"
     description = (
-        "在嵌入的 Linux 系统中执行 shell 命令。用于文件操作、系统查询、安装软件等。"
-        "危险命令会被拦截，命令有 CPU/内存/时间限制。支持 cd 切换目录。"
+        "在WSL2 Linux终端执行shell命令。支持cd切换目录(自动保持工作目录)、命令链(&&/||/;)。"
+        "【何时用】安装依赖(pip install/npm install/playwright install)、下载、编译、git操作、"
+        "运行长命令(超过15秒)、执行shell脚本。"
+        "【不要用】执行Python代码用code_exec(有危险代码检测)；读文件用file_read；"
+        "列目录用file_list；写文件用file_write。"
+        "【安全】危险命令(rm -rf /、mkfs等)会被拦截，有资源限制(ulimit+timeout)。默认工作目录/mnt/d/nexus_agent。"
     )
     params_schema = {
         "type": "object",

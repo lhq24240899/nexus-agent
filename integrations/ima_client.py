@@ -144,11 +144,63 @@ class IMAClient:
             return data.get("content", "")
         return ""
 
+    # ---------- 滚动笔记(追加模式) ----------
+
+    ROLLING_NOTE_TITLE = "Nexus经验日志"
+    _rolling_note_id_cache = None  # 内存缓存
+
+    def _get_rolling_note_id(self):
+        """获取滚动经验笔记的 note_id, 没有则创建"""
+        if self._rolling_note_id_cache:
+            return self._rolling_note_id_cache
+
+        # 1. 先从本地缓存文件读
+        cache_path = os.path.join("data", "ima_rolling_note.json")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                nid = cached.get("note_id")
+                if nid:
+                    self._rolling_note_id_cache = nid
+                    return nid
+            except Exception:
+                pass
+
+        # 2. 搜索已有笔记
+        results = self.search_note(self.ROLLING_NOTE_TITLE, search_content=False)
+        for r in results:
+            if r.get("title") == self.ROLLING_NOTE_TITLE:
+                nid = r.get("note_id")
+                self._rolling_note_id_cache = nid
+                self._save_rolling_note_id(nid)
+                return nid
+
+        # 3. 创建新笔记
+        init_content = f"# {self.ROLLING_NOTE_TITLE}\n\n> Nexus 双核 Agent 经验自动同步日志, 按时间追加\n\n---\n"
+        nid = self.import_doc(init_content, title=None)
+        if nid:
+            self._rolling_note_id_cache = nid
+            self._save_rolling_note_id(nid)
+            logger.info(f"IMA: 创建滚动经验笔记 note_id={nid}")
+        return nid
+
+    @staticmethod
+    def _save_rolling_note_id(note_id):
+        """保存滚动笔记ID到本地缓存"""
+        try:
+            os.makedirs("data", exist_ok=True)
+            with open(os.path.join("data", "ima_rolling_note.json"), "w", encoding="utf-8") as f:
+                json.dump({"note_id": note_id, "created": datetime.now().isoformat()}, f, ensure_ascii=False)
+        except Exception:
+            pass
+
     # ---------- 同步 ----------
 
     def sync_experience(self, exp_id, content, task_summary=""):
         """
-        同步一条经验到 IMA（异步调用，不阻塞主流程）
+        同步一条经验到 IMA（追加模式, 异步调用，不阻塞主流程）
+        所有经验追加到同一个滚动笔记 'Nexus经验日志', 不再每次创建新笔记
         """
         if not self.enabled:
             return
@@ -156,13 +208,25 @@ class IMAClient:
         def _do_sync():
             try:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                title = f"[经验#{exp_id}] {task_summary[:50] if task_summary else '未命名任务'}"
-                md_content = f"> 同步时间: {timestamp}\n> 经验ID: #{exp_id}\n\n{content}"
-                note_id = self.import_doc(md_content, title=None)
+                # 追加内容: 日期分隔 + 经验标题 + 正文
+                entry = (
+                    f"\n\n## [{timestamp}] 经验#{exp_id}\n"
+                    f"**任务**: {task_summary[:80] if task_summary else '未命名'}\n\n"
+                    f"{content}\n"
+                    f"\n---"
+                )
+                note_id = self._get_rolling_note_id()
                 if note_id:
-                    logger.info(f"IMA: 经验#{exp_id} 同步成功 note_id={note_id}")
+                    ok = self.append_doc(note_id, entry)
+                    if ok:
+                        logger.info(f"IMA: 经验#{exp_id} 已追加到滚动笔记 note_id={note_id}")
+                    else:
+                        logger.warning(f"IMA: 经验#{exp_id} 追加失败, 尝试新建笔记")
+                        # 追加失败兜底: 创建独立笔记
+                        fallback = f"> 同步时间: {timestamp}\n> 经验ID: #{exp_id}\n\n{content}"
+                        self.import_doc(fallback, title=f"[经验#{exp_id}] {task_summary[:50] if task_summary else ''}")
                 else:
-                    logger.warning(f"IMA: 经验#{exp_id} 同步失败")
+                    logger.warning(f"IMA: 获取滚动笔记失败, 经验#{exp_id} 未同步")
             except Exception as e:
                 logger.warning(f"IMA: 同步异常: {e}")
 

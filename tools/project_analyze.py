@@ -85,9 +85,9 @@ def _should_skip(name: str) -> bool:
 class ProjectAnalyzeTool(BaseTool):
     name = "project_analyze"
     description = (
-        "分析项目结构, 识别编程语言、框架、依赖、入口文件、测试框架。"
-        "改代码前必须先用这个工具了解项目。返回项目概览和关键文件列表。"
-        "分析结果自动保存为项目档案, 后续编码任务自动注入。"
+        "分析项目结构。扫描目录树、识别技术栈、统计代码行数、列出主要模块。"
+        "【何时用】接到新项目/新任务时，先了解项目结构和技术栈。"
+        "【不要用】已经了解项目结构时不要重复调用；找具体文件用file_list；找具体代码用code_search。"
     )
 
     def __init__(self, profile_manager=None):

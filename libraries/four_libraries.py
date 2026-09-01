@@ -82,6 +82,33 @@ class Library:
         self.vector_store.add(self._vid(item_id), content)
         return {"id": item_id, "content": content, "meta": meta, "timestamp": timestamp}
 
+    def update(self, item_id: int, content: str, meta: dict | None = None) -> bool:
+        """更新条目内容(同时更新向量索引), 返回是否成功"""
+        cursor = self.db.execute(
+            f"UPDATE {self.name} SET content = ? WHERE id = ?",
+            (content, item_id),
+        )
+        if cursor.rowcount > 0:
+            self.vector_store.delete(self._vid(item_id))
+            self.vector_store.add(self._vid(item_id), content)
+            if meta:
+                self.db.execute(
+                    f"UPDATE {self.name} SET meta = ? WHERE id = ?",
+                    (json.dumps(meta, ensure_ascii=False), item_id),
+                )
+            return True
+        return False
+
+    def append_content(self, item_id: int, extra: str) -> bool:
+        """追加内容到已有条目(用于合并task_result+reflection), 返回是否成功"""
+        row = self.db.query(
+            f"SELECT content FROM {self.name} WHERE id = ?", (item_id,))
+        if not row:
+            return False
+        old_content = row[0][0]
+        new_content = old_content + "\n\n" + extra
+        return self.update(item_id, new_content)
+
     def clear(self):
         """清空所有条目 (同时清理向量)"""
         # 先清理向量
