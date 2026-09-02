@@ -214,6 +214,14 @@ class DualCoreAgent:
                 )
             except Exception as e:
                 logger.log("mcp", "filesystem 重启失败", str(e))
+            # 健康检查所有 MCP server, 挂了自动重连
+            try:
+                health = self.mcp_manager.health_check_all()
+                failed = [k for k, v in health.items() if not v]
+                if failed:
+                    logger.log("mcp", "健康检查", f"失败: {failed}")
+            except Exception as e:
+                logger.log("mcp", "健康检查异常", str(e))
         # 清空任务历史, 加载新对话
         self.task_history = []
         self.conversations = {"work": [], "chat": [], "brainstorm": []}
@@ -574,8 +582,8 @@ class DualCoreAgent:
         self.task_history.append(record)
         # 记录任务统计 (聊天模式不沉淀, 避免闲聊稀释编码任务的成功率)
         if not is_light:
-            # 成功判定以工具真实执行情况为准, 不再扫描回答文本(会误判"解释错误处理"等正常回答)
-            success = not self.decision.last_had_tool_error
+            # 成功判定基于最终输出结果, 中间工具失败后成功切换工具完成任务算成功
+            success = bool(result and result.strip())
             self.stats_tracker.record(
                 task=task, success=success,
                 tool_count=len(self.decision.last_tools_used),
@@ -721,8 +729,8 @@ class DualCoreAgent:
         self.task_history.append(record)
         # 记录任务统计 (聊天模式不沉淀)
         if not is_light:
-            # 成功判定以工具真实执行情况为准, 不再扫描回答文本(会误判"解释错误处理"等正常回答)
-            success = not self.decision.last_had_tool_error
+            # 成功判定基于最终输出结果, 中间工具失败后成功切换工具完成任务算成功
+            success = bool(result and result.strip())
             self.stats_tracker.record(
                 task=task, success=success,
                 tool_count=len(self.decision.last_tools_used),

@@ -4,6 +4,7 @@ MCP (Model Context Protocol) 客户端
 协议: JSON-RPC 2.0 over stdio
 """
 import json
+import queue
 import shutil
 import subprocess
 import threading
@@ -87,8 +88,8 @@ class MCPClient:
             return "\n".join(parts) if parts else str(result)
         return json.dumps(result, ensure_ascii=False)
 
-    def _request(self, method: str, params: dict) -> Optional[dict]:
-        """发送 JSON-RPC 请求并等待响应"""
+    def _request(self, method: str, params: dict, timeout: float = 10.0) -> Optional[dict]:
+        """发送 JSON-RPC 请求并等待响应 (带超时)"""
         with self._lock:
             self._request_id += 1
             req_id = self._request_id
@@ -98,29 +99,50 @@ class MCPClient:
                 "method": method,
                 "params": params,
             }
+            result_queue = queue.Queue()
+
+            def _read_responses():
+                """后台线程读取响应, 找到匹配 id 的放入队列"""
+                try:
+                    for _ in range(50):
+                        line = self.process.stdout.readline()
+                        if not line:
+                            result_queue.put(None)
+                            return
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            resp = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if resp.get("id") == req_id:
+                            if "error" in resp:
+                                print(f"[MCP] {method} 错误: {resp['error']}")
+                                result_queue.put(None)
+                                return
+                            result_queue.put(resp.get("result"))
+                            return
+                except Exception as e:
+                    print(f"[MCP] 读取响应异常: {e}")
+                    result_queue.put(None)
+
             try:
                 self.process.stdin.write(json.dumps(message) + "\n")
                 self.process.stdin.flush()
-                # 读取响应 (可能有多行通知, 找到匹配 id 的响应)
-                for _ in range(50):
-                    line = self.process.stdout.readline()
-                    if not line:
-                        break
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        resp = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if resp.get("id") == req_id:
-                        if "error" in resp:
-                            print(f"[MCP] {method} 错误: {resp['error']}")
-                            return None
-                        return resp.get("result")
+                reader_thread = threading.Thread(target=_read_responses, daemon=True)
+                reader_thread.start()
+                try:
+                    result = result_queue.get(timeout=timeout)
+                    return result
+                except queue.Empty:
+                    print(f"[MCP] {method} 超时 ({timeout}s), server 可能已挂起")
+                    self._connected = False
+                    return None
             except Exception as e:
                 print(f"[MCP] 请求 {method} 异常: {e}")
-            return None
+                self._connected = False
+                return None
 
     def _notify(self, method: str, params: dict):
         """发送 JSON-RPC 通知 (无响应)"""
@@ -144,6 +166,21 @@ class MCPClient:
                 self.process.wait(timeout=5)
             except Exception:
                 self.process.kill()
+
+    def health_check(self) -> bool:
+        """健康检查: 调用 tools/list 验证连接是否正常"""
+        if not self._connected or not self.process:
+            return False
+        try:
+            result = self._request("tools/list", {}, timeout=5.0)
+            return result is not None
+        except Exception:
+            return False
+
+    def reconnect(self) -> bool:
+        """断开并重连"""
+        self.disconnect()
+        return self.connect()
 
 
 class MCPManager:
@@ -250,6 +287,33 @@ class MCPManager:
         else:
             print(f"[MCP] {name} 重启失败")
             return False
+
+    def health_check_all(self) -> dict[str, bool]:
+        """健康检查所有 MCP server, 挂了自动重连, 返回 {name: ok}"""
+        results = {}
+        for name, client in self.clients.items():
+            ok = client.health_check()
+            if not ok:
+                print(f"[MCP] {name} 健康检查失败, 尝试重连...")
+                # 删除旧工具
+                self._mcp_tools = [t for t in self._mcp_tools if t.get("server") != name]
+                # 重连
+                if client.reconnect():
+                    tools = client.list_tools()
+                    for tool in tools:
+                        self._mcp_tools.append({
+                            "name": f"mcp_{name}_{tool['name']}",
+                            "server": name,
+                            "tool_name": tool["name"],
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("inputSchema", {}),
+                        })
+                    print(f"[MCP] {name} 重连成功, 获取 {len(tools)} 个工具")
+                    ok = True
+                else:
+                    print(f"[MCP] {name} 重连失败")
+            results[name] = ok
+        return results
 
     def has_tool(self, name: str) -> bool:
         return any(t["name"] == name for t in self._mcp_tools)

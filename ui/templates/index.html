@@ -1338,9 +1338,10 @@ function hideAddWorkspace() {
 }
 
 function browseWorkspaceFolder() {
-  // 弹出自定义选择文件夹弹窗
-  document.getElementById('ws-browse-path').value = document.getElementById('ws-path-input').value || '';
+  // 弹出自定义选择文件夹弹窗, 自动加载根目录
+  document.getElementById('ws-browse-path').value = '';
   document.getElementById('ws-browse-modal').style.display = 'flex';
+  openSystemFolderPicker();
 }
 
 async function openSystemFolderPicker() {
