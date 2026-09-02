@@ -1,0 +1,72 @@
+description: 系统性地分析项目性能瓶颈并实施优化修复的工作流
+improved_at: ''
+name: performance_optimization_analysis
+required_tools:
+- mcp_project_filesystem_list_allowed_directories
+- mcp_project_filesystem_directory_tree
+- mcp_project_filesystem_read_multiple_files
+- mcp_project_filesystem_read_file
+- code_exec
+- mcp_project_filesystem_read_file
+- mcp_project_filesystem_read_file
+- code_search
+- code_search
+- code_exec
+- code_exec
+- mcp_project_filesystem_get_file_info
+- code_exec
+- code_search
+- mcp_project_filesystem_read_file
+- code_exec
+- code_exec
+- code_exec
+- file_write
+- code_exec
+- code_exec
+steps:
+- description: 确认项目根目录及可访问范围
+  tool: mcp_project_filesystem_list_allowed_directories
+- description: 查看项目整体结构和文件布局，定位关键模块
+  tool: mcp_project_filesystem_directory_tree
+- description: 批量读取核心文件了解上下文和调用链路
+  tool: mcp_project_filesystem_read_multiple_files
+- description: 逐文件读取关键实现细节，初判性能热点
+  tool: mcp_project_filesystem_read_file
+- description: 运行性能探查脚本或测试，量化耗时点
+  tool: code_exec
+- description: 搜索潜在阻塞调用、循环、同步IO等模式
+  tool: code_search
+- description: 进一步搜索涉及锁、等待、轮询或大数据处理的代码
+  tool: code_search
+- description: 检查文件运行状态或时间戳，辅助定位动态资源
+  tool: mcp_project_filesystem_get_file_info
+- description: 执行基准测试或profiling，验证瓶颈假设
+  tool: code_exec
+- description: 重读瓶颈相关文件确认逻辑，设计修复方案
+  tool: mcp_project_filesystem_read_file
+- description: 实施修复前进行小规模验证性执行
+  tool: code_exec
+- description: 将优化补丁写入源文件
+  tool: file_write
+- description: 再次执行性能测试，对比优化前后耗时
+  tool: code_exec
+- description: 运行功能回归测试，确认修复未破坏其他行为
+  tool: code_exec
+tags:
+- 性能分析
+- 优化
+- 调试
+- 瓶颈定位
+- 重构
+trigger:
+  keywords:
+  - 性能优化
+  - 性能瓶颈
+  - 慢查询
+  - 响应慢
+  - 卡顿
+  - 优化性能
+  - performance tuning
+  - bottleneck
+  patterns: []
+version: 1

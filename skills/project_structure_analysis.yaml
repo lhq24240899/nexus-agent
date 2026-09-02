@@ -1,0 +1,44 @@
+description: 分析项目代码结构、技术栈与定位，生成结构化摘要报告
+improved_at: ''
+name: project_structure_analysis
+required_tools:
+- project_analyze
+- mcp_project_filesystem_list_allowed_directories
+- mcp_project_filesystem_read_multiple_files
+- mcp_project_filesystem_read_file
+- mcp_project_filesystem_read_file
+- mcp_project_filesystem_read_file
+- mcp_project_filesystem_read_file
+- code_exec
+- mcp_project_filesystem_read_file
+- mcp_project_filesystem_read_file
+- mcp_project_filesystem_read_file
+- code_search
+- mcp_project_filesystem_read_file
+steps:
+- description: 调用项目分析工具获取项目整体概览与初步信息
+  tool: project_analyze
+- description: 查看当前允许访问的目录范围，确认项目路径合法性
+  tool: mcp_project_filesystem_list_allowed_directories
+- description: 批量读取项目的核心配置文件与文档，如README、package.json等
+  tool: mcp_project_filesystem_read_multiple_files
+- description: 逐个读取关键源代码文件以理解目录结构与模块职责
+  tool: mcp_project_filesystem_read_file
+- description: 按关键词搜索项目内相关代码，定位技术实现细节
+  tool: code_search
+- description: 执行必要的脚本或命令以辅助验证技术栈与依赖关系
+  tool: code_exec
+tags:
+- 代码分析
+- 项目结构
+- 技术栈
+- 逆向工程
+trigger:
+  keywords:
+  - 项目分析
+  - 代码结构
+  - 技术栈
+  - 分析项目
+  - 了解项目
+  patterns: []
+version: 1

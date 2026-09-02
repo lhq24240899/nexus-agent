@@ -130,12 +130,86 @@ class SecretaryCore:
         )
         logger.log("secretary", "上下文整理完成", f"递达 {len(filtered)} 字")
 
+        # 四库主动注入: 把高相关沉淀以结构化格式追加到上下文, 确保决策核心能看到
+        library_injection = self._build_library_injection(results, task)
+        if library_injection:
+            filtered = filtered + "\n\n==========\n【四库沉淀 — 自动注入】\n" + library_injection
+            logger.log("secretary", "四库注入完成", f"追加 {len(library_injection)} 字")
+
         # 工具筛选: 从全部工具中选出任务相关的子集, 减少决策核心的 token 消耗
         selected_tools = self._select_tools(task)
         logger.log("secretary", "工具筛选完成",
                    f"{len(selected_tools) if selected_tools else '全部'} 个工具")
 
         return filtered, selected_tools
+
+    def _build_library_injection(self, results: dict, task: str,
+                                  max_chars: int = 1000) -> str:
+        """
+        构建四库主动注入文本 —— 严格控制 token 预算
+        预算分配:
+        - 经验库: 最多3条, 每条<=200字
+        - 记忆库(项目事实): 最多1条, <=150字
+        - 知识库: 最多2条, 每条<=150字
+        - 工具库: 最多3条, 每条<=80字
+        总注入 <= max_chars 字 (约1500 token)
+        """
+        sections = []
+        used_chars = 0
+
+        def _truncate(text: str, limit: int) -> str:
+            text = text.strip()
+            if len(text) > limit:
+                return text[:limit] + "..."
+            return text
+
+        def _add_section(title: str, items: list, per_item_limit: int,
+                         max_items: int, min_score: float = 0.0):
+            nonlocal used_chars
+            if not items:
+                return
+            # 按匹配度排序, 只取高分的
+            sorted_items = sorted(items, key=lambda x: x.get("score", 0), reverse=True)
+            taken = []
+            for it in sorted_items[:max_items]:
+                if it.get("score", 0) < min_score:
+                    continue
+                content = _truncate(it.get("content", ""), per_item_limit)
+                if content:
+                    taken.append(content)
+            if not taken:
+                return
+            section_text = f"【{title}】\n" + "\n".join(f"  - {t}" for t in taken)
+            # 检查预算
+            if used_chars + len(section_text) > max_chars:
+                remaining = max_chars - used_chars
+                if remaining > 50:
+                    section_text = section_text[:remaining] + "..."
+                else:
+                    return
+            sections.append(section_text)
+            used_chars += len(section_text)
+
+        # 经验库 (权重最高, 最有价值)
+        _add_section("经验库", results.get("experience", []),
+                     per_item_limit=200, max_items=3, min_score=0.3)
+        # 记忆库 (项目事实, 每次都有用)
+        _add_section("记忆库", results.get("memory", []),
+                     per_item_limit=150, max_items=1, min_score=0.2)
+        # 知识库
+        _add_section("知识库", results.get("knowledge", []),
+                     per_item_limit=150, max_items=2, min_score=0.3)
+        # 工具库 (使用技巧)
+        _add_section("工具技巧", results.get("tools", []),
+                     per_item_limit=80, max_items=3, min_score=0.3)
+
+        if not sections:
+            return ""
+
+        injection = "\n\n".join(sections)
+        logger.log("secretary", "四库主动注入",
+                   f"{len(sections)}个库, {used_chars}字, 预算{max_chars}字")
+        return injection
 
     def _select_tools(self, task: str) -> list[str] | None:
         """
@@ -195,6 +269,19 @@ class SecretaryCore:
         # 至少保留 3 个工具, 避免筛选过严
         if len(selected) < 3:
             selected.update(["code_exec", "file_read", "current_time"])
+
+        # 排除高失败率工具 (失败率>50% 且调用>=3次)
+        if self.tool_manager:
+            unreliable = self.tool_manager.get_unreliable_tools(threshold=0.5)
+            if unreliable:
+                before = len(selected)
+                selected -= unreliable
+                if len(selected) < 3:
+                    # 过滤后太少, 保留成功率最高的几个
+                    remaining = sorted(unreliable, key=lambda n: self.tool_manager.get_tool_failure_rate(n))
+                    selected.update(remaining[:3 - len(selected)])
+                if before != len(selected):
+                    logger.log("secretary", "工具降权", f"排除高失败率工具: {unreliable}")
 
         # 最多 12 个工具, 避免筛选失效
         result = list(selected)[:12]

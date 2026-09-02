@@ -419,3 +419,230 @@ class SkillManager:
         self.skills.clear()
         self._load_skills()
         return f"技能已重载, 当前 {len(self.skills)} 个技能"
+
+
+    # ========== 技能生命周期管理 ==========
+
+    def get_skill_stats(self, skill_name: str) -> dict:
+        """获取技能统计: 使用次数、成功率、最后使用时间"""
+        rows = self.conn.execute(
+            "SELECT COUNT(*), SUM(success), MAX(timestamp) FROM skill_usage WHERE skill_name = ?",
+            (skill_name,),
+        ).fetchone()
+        total = rows[0] or 0
+        success = rows[1] or 0
+        last_used = rows[2] or ""
+        rate = (success / total * 100) if total > 0 else 0
+        return {
+            "total": total,
+            "success": success,
+            "success_rate": round(rate, 1),
+            "last_used": last_used,
+        }
+
+    def get_all_stats(self) -> list[dict]:
+        """获取所有技能的统计, 按使用次数排序"""
+        result = []
+        for name, skill in self.skills.items():
+            stats = self.get_skill_stats(name)
+            result.append({
+                "name": name,
+                "description": skill.description,
+                "version": skill.version,
+                "confidence": round(skill.confidence, 2),
+                **stats,
+            })
+        result.sort(key=lambda x: x["total"], reverse=True)
+        return result
+
+    def cleanup_low_quality(self, min_success_rate: float = 40.0,
+                            min_usage: int = 5, archive_days: int = 90) -> dict:
+        """
+        自动淘汰低质量技能
+        - 成功率 < min_success_rate 且使用 >= min_usage -> 删除
+        - archive_days 天未使用 -> 归档(重命名为 .archived)
+        返回淘汰统计
+        """
+        import time as _time
+        deleted = []
+        archived = []
+        now = _time.time()
+
+        for name in list(self.skills.keys()):
+            stats = self.get_skill_stats(name)
+            skill = self.skills[name]
+
+            # 低成功率且使用次数足够 -> 删除
+            if stats["total"] >= min_usage and stats["success_rate"] < min_success_rate:
+                self._delete_skill(name)
+                deleted.append({"name": name, "reason": f"成功率{stats['success_rate']}%",
+                                "usage": stats["total"]})
+                continue
+
+            # 长期未使用 -> 归档
+            if stats["last_used"]:
+                try:
+                    last_ts = _time.mktime(_time.strptime(stats["last_used"], "%Y-%m-%d %H:%M:%S"))
+                    days_unused = (now - last_ts) / 86400
+                    if days_unused > archive_days and stats["total"] > 0:
+                        self._archive_skill(name)
+                        archived.append({"name": name, "reason": f"{int(days_unused)}天未使用"})
+                except Exception:
+                    pass
+
+        return {"deleted": deleted, "archived": archived,
+                "total_deleted": len(deleted), "total_archived": len(archived)}
+
+    def _delete_skill(self, skill_name: str):
+        """删除技能文件和内存引用"""
+        skill_file = SKILLS_DIR / f"{skill_name}.yaml"
+        if skill_file.exists():
+            skill_file.unlink()
+        # 同时删除备份
+        for bak in SKILLS_DIR.glob(f"{skill_name}_v*.yaml.bak"):
+            bak.unlink()
+        self.skills.pop(skill_name, None)
+        # 删除使用记录
+        self.db.execute("DELETE FROM skill_usage WHERE skill_name = ?", (skill_name,))
+
+    def _archive_skill(self, skill_name: str):
+        """归档技能(重命名)"""
+        skill_file = SKILLS_DIR / f"{skill_name}.yaml"
+        if skill_file.exists():
+            archived_file = SKILLS_DIR / f"{skill_name}.archived"
+            skill_file.rename(archived_file)
+        self.skills.pop(skill_name, None)
+
+    def find_similar_skill(self, description: str, threshold: float = 0.7) -> Optional[str]:
+        """
+        查找相似技能(基于描述的关键词重叠)
+        返回最相似的技能名, 无相似则返回 None
+        """
+        if not description:
+            return None
+        desc_words = set(description.lower().split())
+        best_name = None
+        best_score = 0
+        for name, skill in self.skills.items():
+            skill_words = set(skill.description.lower().split())
+            if not desc_words or not skill_words:
+                continue
+            overlap = len(desc_words & skill_words)
+            union = len(desc_words | skill_words)
+            score = overlap / union if union > 0 else 0
+            if score > best_score:
+                best_score = score
+                best_name = name
+        if best_score >= threshold:
+            return best_name
+        return None
+
+    def match_skills(self, task: str, top_k: int = 3,
+                     threshold: float = 0.3) -> list[Skill]:
+        """
+        匹配多个技能, 按匹配度排序, 最多返回 top_k 个
+        """
+        scored = []
+        for skill in self.skills.values():
+            score = skill.matches(task)
+            if score >= threshold:
+                scored.append((score, skill))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [s for _, s in scored[:top_k]]
+
+    def get_skill_workflows(self, task: str, top_k: int = 3) -> str:
+        """获取多个匹配技能的工作流文本"""
+        skills = self.match_skills(task, top_k=top_k)
+        if not skills:
+            return ""
+        parts = []
+        for skill in skills:
+            parts.append(skill.to_workflow_text())
+        return "\n\n".join(parts)
+
+    def should_generate_skill(self, task: str, tool_calls: list,
+                              result: str, min_tool_calls: int = 3,
+                              min_similar_tasks: int = 2) -> bool:
+        """
+        判断是否应该从经验生成技能
+        条件:
+        1. 任务成功(结果非空)
+        2. 工具调用 >= min_tool_calls 次
+        3. 同类任务历史出现 >= min_similar_tasks 次
+        4. 没有相似的现有技能
+        """
+        # 1. 任务必须成功
+        if not result or not result.strip():
+            return False
+        # 2. 工具调用次数足够
+        if len(tool_calls) < min_tool_calls:
+            return False
+        # 3. 检查是否有相似技能(避免重复)
+        similar = self.find_similar_skill(task)
+        if similar:
+            return False
+        # 4. 同类任务历史出现次数(从经验库或任务统计中查)
+        # 简化: 用关键词匹配 task_stats 表
+        try:
+            task_words = set(task.lower().split()[:5])
+            rows = self.conn.execute(
+                "SELECT task FROM task_stats ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+            similar_count = 0
+            for row in rows:
+                row_words = set((row[0] or "").lower().split()[:5])
+                overlap = len(task_words & row_words)
+                if overlap >= 2:
+                    similar_count += 1
+            if similar_count < min_similar_tasks:
+                return False
+        except Exception:
+            pass
+        return True
+
+    def auto_generate_skill(self, task: str, tool_calls: list,
+                            result: str) -> Optional[str]:
+        """
+        从任务经验自动生成技能
+        成功返回技能名, 不满足条件返回 None
+        """
+        if not self.should_generate_skill(task, tool_calls, result):
+            return None
+
+        # 从工具调用序列提取步骤
+        steps = []
+        seen_tools = set()
+        for tc in tool_calls:
+            tool_name = tc.get("tool", "") if isinstance(tc, dict) else str(tc)
+            if tool_name and tool_name not in seen_tools:
+                seen_tools.add(tool_name)
+                steps.append({
+                    "tool": tool_name,
+                    "description": f"使用 {tool_name} 完成相关操作",
+                })
+
+        if len(steps) < 2:
+            return None
+
+        # 生成技能名(从任务关键词提取)
+        import re
+        name_words = re.findall(r'[a-zA-Z]+|[一-龥]+', task.lower())
+        skill_name = "_".join(name_words[:4]) if name_words else "auto_skill"
+        skill_name = skill_name[:50]
+
+        # 检查是否已存在
+        if skill_name in self.skills:
+            return None
+
+        try:
+            self.create_skill(
+                name=skill_name,
+                description=f"自动生成: {task[:80]}",
+                trigger_keywords=name_words[:5],
+                steps=steps,
+                required_tools=list(seen_tools),
+                tags=["auto-generated"],
+            )
+            return skill_name
+        except Exception:
+            return None

@@ -81,6 +81,8 @@ class ToolManager:
         self.code_index = code_index
         self.ast_index = ast_index
         self.profile_manager = profile_manager
+        # 工具使用统计: {tool_name: {"success": int, "fail": int}}
+        self._tool_stats: dict[str, dict[str, int]] = {}
         self._load_registry()
         self._init_tools(linux_embed)
         self._load_plugins()
@@ -215,6 +217,11 @@ class ExamplePluginTool(BaseTool):
         # 加入 MCP 工具
         if self._mcp_manager:
             funcs.extend(self._mcp_manager.get_tools())
+        # 按失败率排序: 成功率高的排前面 (模型更容易先选到)
+        def _failure_key(func):
+            name = func["function"]["name"]
+            return self.get_tool_failure_rate(name)
+        funcs.sort(key=_failure_key)
         return funcs
 
     def execute(self, name: str, **kwargs) -> str:
@@ -242,7 +249,37 @@ class ExamplePluginTool(BaseTool):
             except Exception as e:
                 result = f"错误(重试后仍失败): {type(e).__name__}: {e}"
 
+        # 记录工具使用结果 (用于失败率降权)
+        self._record_tool_result(name, result)
         return result
+
+    def _record_tool_result(self, name: str, result: str):
+        """记录工具执行结果, 用于失败率统计"""
+        if name not in self._tool_stats:
+            self._tool_stats[name] = {"success": 0, "fail": 0}
+        is_error = result.startswith(("错误", "失败", "[子代理异常]", "错误(重试后仍失败)"))
+        if is_error:
+            self._tool_stats[name]["fail"] += 1
+        else:
+            self._tool_stats[name]["success"] += 1
+
+    def get_tool_failure_rate(self, name: str) -> float:
+        """获取工具失败率 (0.0~1.0), 调用次数<3时返回0"""
+        stats = self._tool_stats.get(name)
+        if not stats:
+            return 0.0
+        total = stats["success"] + stats["fail"]
+        if total < 3:
+            return 0.0
+        return stats["fail"] / total
+
+    def get_unreliable_tools(self, threshold: float = 0.5) -> set[str]:
+        """获取失败率超过阈值的工具集合 (调用次数>=3)"""
+        return {
+            name for name, stats in self._tool_stats.items()
+            if stats["success"] + stats["fail"] >= 3
+            and stats["fail"] / (stats["success"] + stats["fail"]) > threshold
+        }
 
     def list_tools(self) -> list[dict]:
         tools = [

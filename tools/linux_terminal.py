@@ -36,6 +36,11 @@ class LinuxTerminalTool(BaseTool):
         self.linux = linux_embed
 
     def execute(self, command: str = "", profile: str = "auto", **kwargs) -> str:
+        # 兼容 Agent 传 cmd 而非 command 的情况
+        if not command and "cmd" in kwargs:
+            command = kwargs["cmd"]
+        if not command:
+            return "错误: command 参数为空，请提供要执行的 shell 命令"
         if not self.linux or not self.linux.available:
             return "错误: Linux 环境不可用 (未安装 Docker/WSL)"
 

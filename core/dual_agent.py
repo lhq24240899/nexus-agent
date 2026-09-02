@@ -42,7 +42,7 @@ COMPLEX_KEYWORDS = [
     "知识库", "经验库", "四库", "历史经验", "之前的记录", "复盘",
 ]
 # 超过该长度的任务默认视为复杂任务 (长描述通常包含多步诉求)
-COMPLEX_TASK_MIN_LEN = 40
+COMPLEX_TASK_MIN_LEN = 20
 
 
 def is_simple_question(task: str) -> bool:
@@ -108,6 +108,8 @@ class DualCoreAgent:
             logger.log("system", "临时目录清理", f"清除 {stale} 个残留任务目录")
         # 启动知识库后台自动更新 (每6小时检查一次)
         self.knowledge_updater.start_auto_update(interval_hours=6.0)
+        # 启动技能生命周期管理 (每24小时自动淘汰低质量技能)
+        self._start_skill_lifecycle()
         logger.log("system", "工具已加载",
                    f"{len(self.tool_manager.list_tools())} 个工具: "
                    + ", ".join(t["name"] for t in self.tool_manager.list_tools()))
@@ -142,6 +144,24 @@ class DualCoreAgent:
 
     def get_mode(self) -> str:
         return self.current_mode
+
+    def _start_skill_lifecycle(self):
+        """启动技能生命周期管理后台线程: 定期淘汰低质量技能"""
+        import threading
+        def _lifecycle_loop():
+            import time
+            while True:
+                time.sleep(24 * 3600)  # 每24小时检查一次
+                try:
+                    result = self.skill_manager.cleanup_low_quality()
+                    if result["total_deleted"] > 0 or result["total_archived"] > 0:
+                        logger.log("system", "技能生命周期清理",
+                                   f"删除{result['total_deleted']}个, 归档{result['total_archived']}个")
+                except Exception as e:
+                    logger.log("system", "技能生命周期清理失败", str(e))
+        t = threading.Thread(target=_lifecycle_loop, daemon=True)
+        t.start()
+        logger.log("system", "技能生命周期管理", "已启动, 每24小时自动清理低质量技能")
 
     def switch_workspace(self, name: str, save_current: bool = True) -> dict:
         """切换工作空间: 切换数据库 → 重建索引 → 加载新对话"""
@@ -393,7 +413,7 @@ class DualCoreAgent:
             if not tools_used or len(tools_used) < 2:
                 return
             # 避免重复创建 (检查是否已有相似技能)
-            existing = self.skill_manager.match_skill(task, threshold=0.5)
+            existing = self.skill_manager.find_similar_skill(task)
             if existing:
                 return
             # 用秘书模型生成技能定义
@@ -695,9 +715,10 @@ class DualCoreAgent:
                         pass
                     self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
                     if matched_skill:
-                        self._record_and_improve_skill(
-                            matched_skill, task, result, tools_used, decision_time,
-                            success=not self.decision.last_had_tool_error)
+                        for sn in (matched_skill if isinstance(matched_skill, list) else [matched_skill]):
+                            self._record_and_improve_skill(
+                                sn, task, result, tools_used, decision_time,
+                                success=not self.decision.last_had_tool_error)
                     self._maybe_create_skill(task, result, tools_used)
                 except Exception as e:
                     logger.log("secretary", "后台复盘失败", str(e))
