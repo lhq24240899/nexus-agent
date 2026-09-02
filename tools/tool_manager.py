@@ -24,6 +24,7 @@ from tools.news_search import NewsSearchTool
 from tools.parallel_execute import ParallelExecuteTool
 from tools.use_skill import UseSkillTool
 from tools.cleanup import CleanupTempTool
+from tools.code_ast_tools import CodeFindDefTool, CodeFindRefsTool, CodeOutlineTool
 
 PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
 
@@ -67,14 +68,18 @@ class ToolManager:
         "parallel_execute": ParallelExecuteTool,
         "use_skill": UseSkillTool,
         "cleanup_temp": CleanupTempTool,
+        "code_find_def": CodeFindDefTool,
+        "code_find_refs": CodeFindRefsTool,
+        "code_outline": CodeOutlineTool,
     }
 
-    def __init__(self, linux_embed=None, code_index=None, profile_manager=None):
+    def __init__(self, linux_embed=None, code_index=None, profile_manager=None, ast_index=None):
         self.tools: dict[str, BaseTool] = {}
         self._registry: list[dict] = []
         self._plugin_modules: list = []
         self._mcp_manager = None
         self.code_index = code_index
+        self.ast_index = ast_index
         self.profile_manager = profile_manager
         self._load_registry()
         self._init_tools(linux_embed)
@@ -89,6 +94,13 @@ class ToolManager:
                 self.tools["file_write"].code_index = code_index
             if "code_edit" in self.tools:
                 self.tools["code_edit"].code_index = code_index
+        if ast_index:
+            if "code_find_def" in self.tools:
+                self.tools["code_find_def"].ast_index = ast_index
+            if "code_find_refs" in self.tools:
+                self.tools["code_find_refs"].ast_index = ast_index
+            if "code_outline" in self.tools:
+                self.tools["code_outline"].ast_index = ast_index
         if profile_manager and "project_analyze" in self.tools:
             self.tools["project_analyze"].profile_manager = profile_manager
 

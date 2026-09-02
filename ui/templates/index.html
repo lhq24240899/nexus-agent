@@ -271,12 +271,12 @@
   }
   .mode-segmented {
     display: flex; background: #161b22; border: 1px solid #30363d;
-    border-radius: 8px; overflow: hidden;
+    border-radius: 8px; overflow: hidden; flex-shrink: 0;
   }
   .mode-segmented button {
     appearance: none; -webkit-appearance: none;
     background: transparent; border: none; color: #8b949e;
-    padding: 6px 16px; font-size: 12px; cursor: pointer;
+    padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
     transition: background 0.15s; font-weight: 400;
     border-right: 1px solid #30363d;
     font-family: inherit; outline: none;
@@ -288,7 +288,6 @@
   }
   .sec-toggle-wrap {
     display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b949e;
-    margin-left: auto;
   }
   .sec-toggle {
     position: relative; width: 38px; height: 22px;
@@ -537,12 +536,96 @@
     padding: 1px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;
   }
   body.resizing { user-select: none; cursor: col-resize; }
+  .ws-selector { display: flex; align-items: center; gap: 4px; position: relative; }
+  .ws-current-btn {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 24px 4px 10px; border-radius: 6px; font-size: 12px; font-family: inherit;
+    max-width: 160px; cursor: pointer; position: relative;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ws-current-btn:hover { border-color: #58a6ff; }
+  .ws-current-btn::after {
+    content: "▾"; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    font-size: 10px; color: #8b949e;
+  }
+  .ws-dropdown {
+    position: absolute; top: 100%; left: 0; margin-top: 4px;
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    min-width: 180px; max-width: 240px; z-index: 200;
+    display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    max-height: 300px; overflow-y: auto;
+  }
+  .ws-dropdown.open { display: block; }
+  .ws-dropdown-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; cursor: pointer; font-size: 13px; color: #c9d1d9;
+    border-bottom: 1px solid #21262d;
+  }
+  .ws-dropdown-item:last-child { border-bottom: none; }
+  .ws-dropdown-item:hover { background: #1c2128; }
+  .ws-dropdown-item.active { color: #58a6ff; background: #1c2128; }
+  .ws-dropdown-item .ws-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ws-dropdown-item .ws-del-x {
+    background: none; border: none; color: #6e7681; cursor: pointer;
+    font-size: 14px; padding: 2px 6px; border-radius: 4px; margin-left: 8px;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .ws-dropdown-item:hover .ws-del-x { opacity: 1; }
+  .ws-dropdown-item .ws-del-x:hover { color: #f85149; background: rgba(248,81,73,0.1); }
+  .ws-add-btn {
+    background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    width: 24px; height: 24px; border-radius: 6px; cursor: pointer;
+    font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;
+  }
+  .ws-add-btn:hover { background: #30363d; color: #c9d1d9; }
+  .ws-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000;
+    display: none; align-items: center; justify-content: center;
+  }
+  .ws-modal {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 24px; width: 400px; max-width: 90vw;
+  }
+  .ws-modal h3 { margin: 0 0 16px; color: #e6edf3; font-size: 16px; }
+  .ws-modal label { display: block; color: #8b949e; font-size: 12px; margin-bottom: 4px; }
+  .ws-modal input {
+    width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 8px 10px; border-radius: 6px; font-size: 13px; margin-bottom: 12px;
+    box-sizing: border-box; font-family: inherit;
+  }
+  .ws-modal input:focus { outline: none; border-color: #58a6ff; }
+  .ws-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .ws-modal-actions button {
+    padding: 6px 16px; border-radius: 6px; border: 1px solid #30363d;
+    cursor: pointer; font-size: 13px; font-family: inherit;
+  }
+  .ws-btn-cancel { background: #21262d; color: #8b949e; }
+  .ws-btn-ok { background: #238636; color: #fff; border-color: #238636; }
+
+  /* 滚动到底部悬浮球 */
+  .scroll-fab {
+    position: absolute; bottom: 80px; right: 16px; z-index: 100;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #21262d; border: 1px solid #30363d; color: #58a6ff;
+    cursor: pointer; font-size: 16px; display: none;
+    align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: all 0.2s;
+  }
+  .scroll-fab:hover { background: #30363d; border-color: #58a6ff; }
+  .scroll-fab.visible { display: flex; }
+  .chat-panel { position: relative; }
+
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>Nexus Dual-Core Agent</h1>
+  <h1>Nexus</h1>
+  <div class="ws-selector">
+    <button class="ws-current-btn" id="ws-current-btn" onclick="toggleWsDropdown()" title="Switch workspace">default</button>
+    <div class="ws-dropdown" id="ws-dropdown"></div>
+    <button class="ws-add-btn" onclick="showAddWorkspace()" title="New workspace">+</button>
+  </div>
   <span class="status"><span class="dot"></span><span id="sys-status">Initializing...</span></span>
 </div>
 
@@ -555,6 +638,7 @@
         <div class="meta">Nexus · System</div>
       </div>
     </div>
+    <button class="scroll-fab" id="scroll-fab" onclick="scrollToBottom()" title="Scroll to latest">↓</button>
     <div class="chat-input">
       <div class="input-controls">
         <div class="mode-segmented" id="agent-mode">
@@ -584,11 +668,11 @@
 
   <div class="side-panel">
     <div class="tabs">
-      <div class="tab active" onclick="switchTab('logs')">Activity Log</div>
-      <div class="tab" onclick="switchTab('cost')">Cost Monitor</div>
-      <div class="tab" onclick="switchTab('linux')">Linux Terminal</div>
-      <div class="tab" onclick="switchTab('libs')">Libraries</div>
-      <div class="tab" onclick="switchTab('stats')">Stats</div>
+      <div class="tab active" data-tab="logs" onclick="switchTab('logs')">Activity Log</div>
+      <div class="tab" data-tab="cost" onclick="switchTab('cost')">Cost Monitor</div>
+      <div class="tab" data-tab="linux" onclick="switchTab('linux')">Linux Terminal</div>
+      <div class="tab" data-tab="libs" onclick="switchTab('libs')">Libraries</div>
+      <div class="tab" data-tab="stats" onclick="switchTab('stats')">Stats</div>
     </div>
 
     <div class="tab-content active" id="tab-logs">
@@ -716,11 +800,13 @@ document.addEventListener('mouseup', () => {
 });
 
 // ============ Tab 切换 ============
-function switchTab(name) {
+function switchTab(name, evt) {
   currentTab = name;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  event.target.classList.add('active');
+  // 用 data-tab 属性匹配, 不依赖 event.target
+  const tabBtn = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (tabBtn) tabBtn.classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'cost') loadCost();
   if (name === 'linux') loadLinuxInfo();
@@ -827,13 +913,18 @@ async function loadTaskStats() {
     document.getElementById('stat-tokens').textContent = 'Avg tokens: ' + data.avg_tokens;
     const recentEl = document.getElementById('stat-recent');
     if (data.recent && data.recent.length > 0) {
-      recentEl.innerHTML = data.recent.map(t =>
-        '<div style="padding:4px 8px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between;">' +
-        '<span style="color:' + (t.success ? '#3fb950' : '#f85149') + ';">' +
-        (t.success ? '✓' : '✗') + ' ' + escapeHtml(t.task) + '</span>' +
-        '<span style="color:#8b949e;">' + t.tools + ' tools · ' + t.duration + 's · ' + t.time.slice(5,16) + '</span>' +
-        '</div>'
-      ).join('');
+      recentEl.innerHTML = data.recent.map(t => {
+        const task = escapeHtml(t.task || '');
+        const tools = t.tools != null ? t.tools : 0;
+        const duration = t.duration != null ? t.duration : 0;
+        const timeStr = t.time ? String(t.time).slice(5, 16) : '';
+        const ok = !!t.success;
+        return '<div style="padding:4px 8px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between;">' +
+          '<span style="color:' + (ok ? '#3fb950' : '#f85149') + ';">' +
+          (ok ? '✓' : '✗') + ' ' + task + '</span>' +
+          '<span style="color:#8b949e;">' + tools + ' tools · ' + duration + 's · ' + timeStr + '</span>' +
+          '</div>';
+      }).join('');
     } else {
       recentEl.innerHTML = '<div style="color:#8b949e; padding:8px;">No tasks yet.</div>';
     }
@@ -1120,6 +1211,229 @@ async function switchAgentMode(mode) {
   loadStats();  // 刷新状态栏的当前模式/轮次
 }
 
+// 页面加载时加载工作空间列表
+window.addEventListener('DOMContentLoaded', () => { setTimeout(loadWorkspaces, 500); });
+
+// ========== 工作空间管理 ==========
+async function loadWorkspaces() {
+  try {
+    const r = await fetch('/api/workspaces');
+    const d = await r.json();
+    const dropdown = document.getElementById('ws-dropdown');
+    const currentBtn = document.getElementById('ws-current-btn');
+    if (!dropdown || !currentBtn) return;
+    dropdown.innerHTML = '';
+    (d.workspaces || []).forEach(ws => {
+      const item = document.createElement('div');
+      item.className = 'ws-dropdown-item' + (ws.name === d.current ? ' active' : '');
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'ws-name';
+      nameSpan.textContent = ws.name;
+      nameSpan.title = ws.path || '';
+      nameSpan.onclick = (e) => { e.stopPropagation(); switchWorkspace(ws.name); closeWsDropdown(); };
+      item.appendChild(nameSpan);
+      if (ws.name !== 'default') {
+        const delBtn = document.createElement('button');
+        delBtn.className = 'ws-del-x';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Delete workspace';
+        delBtn.onclick = (e) => { e.stopPropagation(); deleteWorkspace(ws.name); };
+        item.appendChild(delBtn);
+      }
+      dropdown.appendChild(item);
+    });
+    currentBtn.textContent = d.current || 'default';
+  } catch (e) {}
+}
+function toggleWsDropdown() {
+  const dd = document.getElementById('ws-dropdown');
+  dd.classList.toggle('open');
+}
+function closeWsDropdown() {
+  document.getElementById('ws-dropdown').classList.remove('open');
+}
+let pendingDeleteName = null;
+async function deleteWorkspace(name) {
+  if (name === 'default') return;
+  pendingDeleteName = name;
+  document.getElementById('ws-delete-name').textContent = name;
+  document.getElementById('ws-delete-modal').style.display = 'flex';
+}
+function hideDeleteWorkspaceModal() {
+  document.getElementById('ws-delete-modal').style.display = 'none';
+  pendingDeleteName = null;
+}
+async function confirmDeleteWorkspace() {
+  const name = pendingDeleteName;
+  if (!name) return;
+  hideDeleteWorkspaceModal();
+  try {
+    const r = await fetch('/api/workspaces/' + encodeURIComponent(name), {method: 'DELETE'});
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    closeWsDropdown();
+    // 如果删的是当前工作空间, 切换到 default
+    const currentBtn = document.getElementById('ws-current-btn');
+    if (currentBtn && currentBtn.textContent === name) {
+      await switchWorkspace('default');
+    }
+    loadWorkspaces();
+  } catch (e) { alert('Delete failed: ' + e.message); }
+}
+// 点击外部关闭下拉
+document.addEventListener('click', (e) => {
+  const selector = document.querySelector('.ws-selector');
+  if (selector && !selector.contains(e.target)) {
+    closeWsDropdown();
+  }
+});
+
+async function switchWorkspace(name) {
+  if (!name) return;
+  try {
+    const r = await fetch('/api/workspaces/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name}),
+    });
+    const d = await r.json();
+    if (d.error) { alert(d.error); loadWorkspaces(); return; }
+    // 更新当前工作空间按钮文本
+    const curBtn = document.getElementById('ws-current-btn');
+    if (curBtn) curBtn.textContent = name;
+    // 清空对话区, 重新加载
+    const box = document.getElementById('chat-messages');
+    const welcome = document.getElementById('welcome-msg');
+    box.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.id = 'history-loader';
+    loader.style.cssText = 'text-align:center;padding:8px;color:#8b949e;font-size:12px;';
+    loader.textContent = 'Switching workspace...';
+    box.appendChild(loader);
+    if (welcome) box.appendChild(welcome);
+    historyOffset = 0;
+    historyHasMore = true;
+    await loadMoreHistory(true);
+    loadLibraries();
+    loadStats();
+    // 切换工作空间后刷新所有按工作空间隔离的面板
+    await loadTaskStats();
+    loadStats();
+    // 如果当前在按工作空间隔离的 tab, 强制刷新(双保险)
+    if (currentTab === 'stats') { try { loadTaskStats(); } catch(e) {} }
+    if (currentTab === 'libs') { try { loadLibraries(); } catch(e) {} }
+    if (currentTab === 'linux') { try { loadLinuxInfo(); } catch(e) {} }
+  } catch (e) { alert('Switch failed: ' + e.message); }
+}
+
+function showAddWorkspace() {
+  document.getElementById('ws-modal').style.display = 'flex';
+  document.getElementById('ws-name-input').value = '';
+  document.getElementById('ws-path-input').value = '';
+  document.getElementById('ws-name-input').focus();
+}
+
+function hideAddWorkspace() {
+  document.getElementById('ws-modal').style.display = 'none';
+}
+
+function browseWorkspaceFolder() {
+  // 弹出自定义选择文件夹弹窗
+  document.getElementById('ws-browse-path').value = document.getElementById('ws-path-input').value || '';
+  document.getElementById('ws-browse-modal').style.display = 'flex';
+}
+
+async function openSystemFolderPicker() {
+  // pywebview 桌面端: 调用原生系统文件夹选择对话框
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.choose_folder) {
+    try {
+      const folder = await window.pywebview.api.choose_folder();
+      if (folder && !folder.startsWith('__error__')) {
+        document.getElementById('ws-browse-path').value = folder;
+        loadDirList(folder);
+      }
+      return;
+    } catch (e) {
+      console.log('pywebview choose_folder failed:', e);
+    }
+  }
+  // 浏览器端: 通过后端 API 浏览目录
+  loadDirList('');
+}
+
+let currentDirPath = '';
+async function loadDirList(path) {
+  currentDirPath = path || '';
+  document.getElementById('ws-browse-path').value = path;
+  const listEl = document.getElementById('dir-list');
+  listEl.innerHTML = '<div style="color:#6e7681; font-size:13px; padding:16px; text-align:center;">Loading...</div>';
+  try {
+    const url = '/api/browse_dir' + (path ? '?path=' + encodeURIComponent(path) : '');
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.error) { listEl.innerHTML = '<div style="color:#f85149; font-size:13px; padding:16px; text-align:center;">' + d.error + '</div>'; return; }
+    document.getElementById('dir-up-btn').style.opacity = d.parent ? '1' : '0.4';
+    document.getElementById('dir-up-btn').style.cursor = d.parent ? 'pointer' : 'not-allowed';
+    if (d.dirs.length === 0) {
+      listEl.innerHTML = '<div style="color:#6e7681; font-size:13px; padding:16px; text-align:center;">No subfolders</div>';
+      return;
+    }
+    listEl.innerHTML = d.dirs.map(item =>
+      '<div class="dir-item" onclick="loadDirList(\'' + item.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid #21262d; color:#c9d1d9; font-size:13px; display:flex; align-items:center; gap:8px;" onmouseover="this.style.background=\'#161b22\'" onmouseout="this.style.background=\'transparent\'">' +
+      '<span style="color:#58a6ff;">&#128193;</span> ' + item.name +
+      '</div>'
+    ).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:#f85149; font-size:13px; padding:16px; text-align:center;">Failed to load: ' + e.message + '</div>';
+  }
+}
+
+function goUpDir() {
+  if (!currentDirPath) return;
+  // 盘符根目录(如 D:\)直接返回根目录列表
+  if (/^[A-Za-z]:[\\/]?$/.test(currentDirPath)) {
+    loadDirList('');
+    return;
+  }
+  const parent = currentDirPath.replace(/[\\/][^\\/]+[\\/]?$/, '');
+  loadDirList(parent || '');
+}
+
+function hideBrowseFolderModal() {
+  document.getElementById('ws-browse-modal').style.display = 'none';
+}
+
+function confirmBrowseFolder() {
+  const folder = document.getElementById('ws-browse-path').value.trim();
+  if (!folder) return;
+  document.getElementById('ws-path-input').value = folder;
+  // 自动用目录名填充工作空间名(如果为空)
+  const nameInput = document.getElementById('ws-name-input');
+  if (!nameInput.value.trim()) {
+    const parts = folder.replace(/\\/g, '/').split('/').filter(Boolean);
+    nameInput.value = parts[parts.length - 1] || '';
+  }
+  hideBrowseFolderModal();
+}
+
+async function createWorkspace() {
+  const name = document.getElementById('ws-name-input').value.trim();
+  const path = document.getElementById('ws-path-input').value.trim();
+  if (!name || !path) { alert('Name and path are required'); return; }
+  try {
+    const r = await fetch('/api/workspaces', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, path}),
+    });
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    hideAddWorkspace();
+    await loadWorkspaces();
+    await switchWorkspace(name);
+  } catch (e) { alert('Create failed: ' + e.message); }
+}
+
 function toggleSecretary() {
   const btn = document.getElementById('secretary-toggle');
   btn.classList.toggle('on');
@@ -1154,7 +1468,7 @@ async function sendMessage() {
     respDiv.innerHTML = '<div class="bubble loading">Nexus thinking...</div>';
     document.getElementById('chat-messages').appendChild(respDiv);
     const bubble = respDiv.querySelector('.bubble');
-    document.getElementById('chat-messages').scrollTop = 999999;
+    autoScrollToBottom();
 
     currentAbortController = new AbortController();
     let fullText = '';
@@ -1205,7 +1519,8 @@ async function sendMessage() {
           }
           fullText += event.content;
           bubble.textContent = fullText;
-          document.getElementById('chat-messages').scrollTop = 999999;
+          // 只有用户在底部附近时才自动跟随, 向上滚动时不强制
+          autoScrollToBottom();
         } else if (event.type === 'replace_content') {
           // 强制总结: 替换气泡内容
           fullText = event.content;
@@ -1240,7 +1555,7 @@ async function sendMessage() {
       `<div class="bubble">${renderMarkdown(fullText)}</div>` +
       `<div class="meta">Nexus · ${fastBadge} Time ${timing.total_s}s · Decision ${timing.decision_s}s · Tokens ${tokens.total} (in ${tokens.input} / out ${tokens.output})</div>` +
       buildActions('nexus', respDiv);
-    loadLogs(); loadCost();
+    loadLogs(); loadCost(); loadStats();
   } catch (e) {
     if (e.name === 'AbortError') {
       bubble.textContent = fullText + '\n\n(Stopped)';
@@ -1658,6 +1973,47 @@ async function diagnoseError() {
 }
 
 loadLogs(); loadStats(); loadTaskStats();
+
+// ========== 滚动跟随 & 悬浮球 ==========
+let userScrolledUp = false;
+function autoScrollToBottom() {
+  const box = document.getElementById('chat-messages');
+  if (!userScrolledUp) {
+    box.scrollTop = box.scrollHeight;
+  }
+  updateScrollFab();
+}
+function scrollToBottom() {
+  const box = document.getElementById('chat-messages');
+  box.scrollTo({top: box.scrollHeight, behavior: 'smooth'});
+  userScrolledUp = false;
+  updateScrollFab();
+}
+function updateScrollFab() {
+  const box = document.getElementById('chat-messages');
+  const fab = document.getElementById('scroll-fab');
+  if (!fab) return;
+  const fromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+  if (fromBottom > 100) {
+    fab.classList.add('visible');
+  } else {
+    fab.classList.remove('visible');
+  }
+}
+// 初始化滚动监听
+document.addEventListener('DOMContentLoaded', () => {
+  const box = document.getElementById('chat-messages');
+  if (box) {
+    box.addEventListener('scroll', () => {
+      const fromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+      userScrolledUp = fromBottom > 100;
+      updateScrollFab();
+    });
+  }
+  loadStats();
+});
+// ========== 删除工作空间 ==========
+
 </script>
 
 <!-- 弹出菜单 -->
@@ -1680,5 +2036,59 @@ loadLogs(); loadStats(); loadTaskStats();
       </div>
     </div>
   </div>
+
+<div class="ws-modal-overlay" id="ws-modal">
+  <div class="ws-modal">
+    <h3>New Workspace</h3>
+    <label>Name</label>
+    <input type="text" id="ws-name-input" placeholder="my-project">
+    <label>Project Path</label>
+    <div style="display:flex; gap:8px; margin-bottom:12px;">
+      <input type="text" id="ws-path-input" placeholder="D:\my_project" style="flex:1; margin-bottom:0;">
+      <button onclick="browseWorkspaceFolder()" style="padding:8px 14px; background:#21262d; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; cursor:pointer; font-size:13px; font-family:inherit; white-space:nowrap;">Browse</button>
+    </div>
+    <input type="file" id="ws-folder-input" webkitdirectory directory multiple style="display:none;">
+    <div class="ws-modal-actions">
+      <button class="ws-btn-cancel" onclick="hideAddWorkspace()">Cancel</button>
+      <button class="ws-btn-ok" onclick="createWorkspace()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- 删除工作空间确认弹窗 -->
+<div class="ws-modal-overlay" id="ws-delete-modal">
+  <div class="ws-modal">
+    <h3 style="color:#f85149;">Delete Workspace</h3>
+    <p style="color:#c9d1d9; font-size:13px; line-height:1.6; margin:0 0 8px;">
+      Are you sure you want to delete <strong id="ws-delete-name" style="color:#f85149;"></strong>?
+    </p>
+    <p style="color:#8b949e; font-size:12px; line-height:1.5; margin:0 0 16px;">
+      This removes its conversation history, libraries (tools/knowledge/experience/memory), task stats and code index. This action cannot be undone.
+    </p>
+    <div class="ws-modal-actions">
+      <button class="ws-btn-cancel" onclick="hideDeleteWorkspaceModal()">Cancel</button>
+      <button onclick="confirmDeleteWorkspace()" style="padding:6px 16px; border-radius:6px; border:1px solid #f85149; background:#da3633; color:#fff; cursor:pointer; font-size:13px; font-family:inherit;">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- 选择文件夹弹窗 -->
+<div class="ws-modal-overlay" id="ws-browse-modal">
+  <div class="ws-modal" style="width:480px;">
+    <h3>Select Project Folder</h3>
+    <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+      <button onclick="goUpDir()" id="dir-up-btn" style="padding:6px 12px; background:#21262d; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; cursor:pointer; font-size:13px; font-family:inherit; white-space:nowrap;">&#8593; Up</button>
+      <input type="text" id="ws-browse-path" placeholder="D:\my_project" style="flex:1; margin-bottom:0;" onkeydown="if(event.key==='Enter')loadDirList(this.value)">
+    </div>
+    <div id="dir-list" style="max-height:240px; overflow-y:auto; border:1px solid #30363d; border-radius:6px; margin-bottom:12px; background:#0d1117;">
+      <div style="color:#6e7681; font-size:13px; padding:16px; text-align:center;">Loading...</div>
+    </div>
+    <p style="color:#8b949e; font-size:12px; margin:0 0 16px;">Click a folder to navigate, or type a path directly. Confirm to use the current folder.</p>
+    <div class="ws-modal-actions">
+      <button class="ws-btn-cancel" onclick="hideBrowseFolderModal()">Cancel</button>
+      <button class="ws-btn-ok" onclick="confirmBrowseFolder()">Confirm</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

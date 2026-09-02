@@ -67,3 +67,16 @@
   label: 清理临时文件
   description: 清理本次任务在 temp/ 临时工作目录中生成的测试验证文件, 验证完成后主动调用
   category: system
+
+- name: code_find_def
+  label: 符号定位
+  description: 精确定位函数/类的定义位置(文件+行号+签名+docstring), 改代码前必用
+  category: file
+- name: code_find_refs
+  label: 引用追踪
+  description: 查找函数/类在项目中所有被调用的位置, 重构/改名/删除前评估影响范围
+  category: file
+- name: code_outline
+  label: 文件大纲
+  description: 列出Python文件的结构大纲(所有类/函数名+行号+签名), 快速了解文件结构
+  category: file

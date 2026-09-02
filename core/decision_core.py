@@ -30,7 +30,7 @@ class DecisionCore:
         self.temperature = DECISION_CONFIG["temperature"]
         self.configured = bool(DECISION_CONFIG["api_key"])
         self.tool_manager = tool_manager
-        self.max_tool_calls = 12
+        self.max_tool_calls = 50  # 解除限制, 复杂任务需要更多工具调用
         self.last_tools_used: list[str] = []
         # 本轮决策中工具执行失败的次数 (成功判定依据, 每次 decide 开头重置)
         self.last_tool_errors = 0
@@ -343,7 +343,9 @@ class DecisionCore:
 - 【创建新文件不需要先读】用户要求创建新文件时, 直接 file_write, 不需要先 file_read 确认不存在
 
 【编码工作流】
-1. 理解: project_analyze 看项目结构 → code_search 找位置 → file_read 读文件
+1. 理解(精确): project_analyze 看项目结构 → code_find_def 精确定位函数/类定义 → code_find_refs 看所有调用方(评估改动影响) → code_outline 看文件结构 → file_read 读具体内容
+   - 改函数/类前必须先 code_find_def 确认定义位置, 再 code_find_refs 看影响范围, 不要用 code_search 关键词瞎搜
+   - 陌生文件先用 code_outline 看大纲, 再决定读哪段
 2. 方案: 明确改哪些文件, 小步修改, 改完验证再改下一个
 3. 执行: 小改动用 code_edit(search_replace, 搜索文本必须唯一), 新文件用 file_write
    - 没读文件前绝对不用 file_write 覆盖

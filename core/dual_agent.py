@@ -3,6 +3,7 @@
 流程: 用户任务 → 秘书预判检索(含历史对话) → 决策核心决策 → 秘书沉淀+反思
 支持快速通道: 简单问题跳过秘书, 直接回答
 """
+import os
 import time
 import json
 import threading
@@ -15,7 +16,8 @@ from tools.tool_manager import ToolManager
 from libraries.knowledge_updater import KnowledgeUpdater
 from skills.skill_manager import SkillManager
 from mcp.mcp_client import MCPManager
-from tools.code_index import CodeIndex
+from tools.code_index import CodeIndex, MultiLangCodeIndex
+from core.workspace import WorkspaceManager
 from tools.safety import is_dangerous, build_safe_command
 from utils.logger import logger
 from utils.cost_tracker import cost_tracker
@@ -23,7 +25,7 @@ from utils.task_stats import TaskStatsTracker
 from utils import temp_workspace
 from config import DATA_DIR, MODEL_ROUTING
 
-HISTORY_FILE = DATA_DIR / "conversation_history.json"
+HISTORY_FILE = DATA_DIR / "conversation_history.json"  # 默认, 运行时由工作空间覆盖
 MAX_HISTORY_TURNS = 10
 
 # 强复杂信号: 只有命中这些词(或任务超长)才走完整双核流程(秘书四库检索+反思)。
@@ -56,6 +58,11 @@ class DualCoreAgent:
 
     def __init__(self, use_linux: bool = True):
         logger.log("system", "系统启动", "初始化双核 Agent")
+        # 工作空间必须最先初始化: 决定数据库路径, 后续所有组件都用工作空间的数据库
+        self.workspace_mgr = WorkspaceManager()
+        ws = self.workspace_mgr.get_current()
+        from utils.db import get_db
+        get_db().set_path(str(self.workspace_mgr.library_db()))
         self.secretary = SecretaryCore()
         self.linux = LinuxEmbed() if use_linux else None
         if self.linux and self.linux.available:
@@ -63,9 +70,11 @@ class DualCoreAgent:
         elif self.linux:
             logger.log("linux", "Linux 不可用", f"回退模式: {self.linux.mode}")
         self.code_index = CodeIndex()
+        self.ast_index = MultiLangCodeIndex(project_root=ws.get("path", "."), max_workers=4)
+        self.ast_index.build()
         from tools.project_profile import ProjectProfileManager
         self.project_profile = ProjectProfileManager()
-        self.tool_manager = ToolManager(linux_embed=self.linux, code_index=self.code_index,
+        self.tool_manager = ToolManager(linux_embed=self.linux, code_index=self.code_index, ast_index=self.ast_index,
                                         profile_manager=self.project_profile)
         self.secretary.tool_manager = self.tool_manager  # 秘书需要工具列表做筛选
         self.decision = DecisionCore(tool_manager=self.tool_manager)
@@ -82,6 +91,15 @@ class DualCoreAgent:
         # MCP 客户端 (连接外部 MCP server, 扩展工具生态)
         self.mcp_manager = MCPManager()
         self.tool_manager.set_mcp_manager(self.mcp_manager)
+        # 用当前工作空间路径重启 filesystem MCP (mcp_servers.json 里硬编码了 default 路径)
+        if ws.get("path") and ws["path"] != "D:/nexus_agent" and ws["path"] != "D:\\nexus_agent":
+            try:
+                self.mcp_manager.restart_server(
+                    "project_filesystem",
+                    ["-y", "@modelcontextprotocol/server-filesystem", ws["path"].replace("\\", "/")]
+                )
+            except Exception as e:
+                logger.log("mcp", "启动时 filesystem 重启失败", str(e))
         self.stats_tracker = TaskStatsTracker()
         self.knowledge_updater = KnowledgeUpdater(self.secretary)
         # 清理上次异常退出残留的临时任务目录
@@ -100,6 +118,12 @@ class DualCoreAgent:
         self.conversations: dict[str, list[dict]] = {"work": [], "chat": [], "brainstorm": []}
         self.conversation: list[dict] = []  # 当前模式的对话引用
         self._load_conversation()
+        # 最后切换进程工作目录到当前工作空间 (兜底: 中间组件可能改 cwd, 这里确保最终正确)
+        try:
+            os.chdir(ws.get("path", "."))
+            logger.log("system", "工作目录已切换", ws.get("path", "."))
+        except Exception as e:
+            logger.log("system", "工作目录切换失败", str(e))
         self._chat_tools = ["web_search", "current_time"]
         self._brainstorm_tools = ["web_search", "current_time"]  # 头脑风暴也用轻量工具
 
@@ -119,6 +143,116 @@ class DualCoreAgent:
     def get_mode(self) -> str:
         return self.current_mode
 
+    def switch_workspace(self, name: str, save_current: bool = True) -> dict:
+        """切换工作空间: 切换数据库 → 重建索引 → 加载新对话"""
+        # 注意: 任务完成时已保存对话, 这里不再保存, 避免内存中的旧对话覆盖文件
+        ws = self.workspace_mgr.switch(name)
+        if "error" in ws:
+            return ws
+        # 切换数据库连接
+        from utils.db import get_db
+        get_db().set_path(str(self.workspace_mgr.library_db()))
+        # 重建四库连接(新数据库)
+        self.secretary.libs.reconnect()
+        # 重建代码索引(新项目根目录)
+        self.ast_index = MultiLangCodeIndex(project_root=ws["path"], max_workers=4)
+        self.ast_index.build()
+        # 注入到工具
+        self.tool_manager.ast_index = self.ast_index
+        for tname in ["code_find_def", "code_find_refs", "code_outline"]:
+            if tname in self.tool_manager.tools:
+                self.tool_manager.tools[tname].ast_index = self.ast_index
+        # 切换 Windows 进程工作目录 (文件工具的相对路径基于 os.getcwd())
+        import os
+        try:
+            os.chdir(ws["path"])
+        except Exception as e:
+            logger.log("system", "工作目录切换失败", str(e))
+        # 切换 WSL2 工作目录到新项目路径 (切到哪个项目, Linux 默认就在哪个目录下操作)
+        if self.linux and self.linux.available and self.linux.mode == "wsl":
+            from system.linux_embed import LinuxEmbed
+            self.linux.cwd = LinuxEmbed._win_to_wsl_path(ws["path"])
+            logger.log("linux", "工作目录已切换", self.linux.cwd)
+        # 重建旧版 code_index (正则索引, 部分工具仍在用)
+        if hasattr(self, "code_index") and self.code_index:
+            try:
+                self.code_index.project_root = ws["path"]
+                self.code_index.build()
+            except Exception:
+                pass
+        # 重建所有组件的表 (新工作空间的数据库可能缺表)
+        # 注意: 切换数据库后各组件的 self.conn 还是旧连接, 必须先更新引用
+        from utils.db import get_db
+        fresh_conn = get_db().conn
+        for comp_name in ["stats_tracker", "code_index", "skill_manager", "project_profile", "ast_index"]:
+            comp = getattr(self, comp_name, None)
+            if comp and hasattr(comp, "conn"):
+                comp.conn = fresh_conn
+        if hasattr(self, "stats_tracker") and self.stats_tracker:
+            try: self.stats_tracker._init_table()
+            except Exception: pass
+        if hasattr(self, "code_index") and self.code_index:
+            try: self.code_index._init_table()
+            except Exception: pass
+        if hasattr(self, "skill_manager") and self.skill_manager:
+            try: self.skill_manager._init_db()
+            except Exception: pass
+        if hasattr(self, "project_profile") and self.project_profile:
+            try: self.project_profile._init_table()
+            except Exception: pass
+        if hasattr(self, "ast_index") and self.ast_index:
+            try:
+                if hasattr(self.ast_index, "_init_table"):
+                    self.ast_index._init_table()
+            except Exception: pass
+        # 重启 filesystem MCP server, 用新工作空间路径 (否则 Agent 会读旧项目)
+        if hasattr(self, "mcp_manager") and self.mcp_manager:
+            try:
+                self.mcp_manager.restart_server(
+                    "project_filesystem",
+                    ["-y", "@modelcontextprotocol/server-filesystem", ws["path"].replace("\\", "/")]
+                )
+            except Exception as e:
+                logger.log("mcp", "filesystem 重启失败", str(e))
+        # 清空任务历史, 加载新对话
+        self.task_history = []
+        self.conversations = {"work": [], "chat": [], "brainstorm": []}
+        self._load_conversation()
+        logger.log("system", "工作空间切换", "当前: %s (%s)" % (ws["name"], ws["path"]))
+        return {"name": ws["name"], "path": ws["path"],
+                "history_count": len(self.conversation)}
+
+    def delete_workspace(self, name: str) -> dict:
+        """删除工作空间: 先保存当前对话 → 删除 → 如果删的是当前则切回default"""
+        if name == "default":
+            return {"error": "不能删除默认工作空间"}
+        is_current = self.workspace_mgr.current_name == name
+        if is_current:
+            # 先保存当前对话到旧工作空间(此时 current 还是旧的, 不会存错地方)
+            try:
+                self._save_conversation()
+            except Exception:
+                pass
+        # 删除工作空间(workspace_mgr.delete 会把 current 改回 default, 但 agent 状态还没更新)
+        result = self.workspace_mgr.delete(name)
+        if "error" in result:
+            return result
+        if is_current:
+            # 清空当前对话, 切换到 default 时跳过保存(否则空对话会覆盖 default 的历史)
+            self.conversation = []
+            self.conversations = {"work": [], "chat": [], "brainstorm": []}
+            self.switch_workspace("default", save_current=False)
+        return result
+
+    def create_workspace(self, name: str, path: str) -> dict:
+        """创建新工作空间"""
+        return self.workspace_mgr.create(name, path)
+
+    def list_workspaces(self) -> list:
+        """列出所有工作空间"""
+        return self.workspace_mgr.list()
+
+
     def _apply_mode(self, mode: str | None) -> str:
         """任务前应用模式: 切换决策核心提示词与模型, 返回实际模式"""
         actual = mode if mode in ("work", "chat", "brainstorm") else self.current_mode
@@ -134,9 +268,10 @@ class DualCoreAgent:
         return actual
 
     def _load_conversation(self):
-        if HISTORY_FILE.exists():
+        hf = self.workspace_mgr.history_file()
+        if hf.exists():
             try:
-                data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+                data = json.loads(hf.read_text(encoding="utf-8"))
                 # 兼容旧格式: 纯列表 → 当作 work 模式
                 if isinstance(data, list):
                     self.conversations = {"work": data, "chat": [], "brainstorm": []}
@@ -156,7 +291,7 @@ class DualCoreAgent:
         mode = mode or self.current_mode
         conv = conv if conv is not None else self.conversation
         self.conversations[mode] = conv
-        HISTORY_FILE.write_text(
+        self.workspace_mgr.history_file().write_text(
             json.dumps(self.conversations, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )

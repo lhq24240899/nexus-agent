@@ -500,6 +500,74 @@ def create_app() -> Flask:
             "time_s": record["timing"]["total_s"],
         })
 
+
+    # ============ 工作空间管理 ============
+    @app.route("/api/workspaces")
+    def list_workspaces():
+        return jsonify({
+            "current": agent.workspace_mgr.current_name,
+            "workspaces": agent.list_workspaces(),
+        })
+
+    @app.route("/api/workspaces", methods=["POST"])
+    def create_workspace():
+        data = request.get_json()
+        name = data.get("name", "").strip()
+        path = data.get("path", "").strip()
+        if not name or not path:
+            return jsonify({"error": "name 和 path 不能为空"}), 400
+        result = agent.create_workspace(name, path)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+
+    @app.route("/api/workspaces/switch", methods=["POST"])
+    def switch_workspace():
+        data = request.get_json()
+        name = data.get("name", "").strip()
+        if not name:
+            return jsonify({"error": "name 不能为空"}), 400
+        result = agent.switch_workspace(name)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+
+    @app.route("/api/workspaces/<name>", methods=["DELETE"])
+    def delete_workspace(name):
+        result = agent.delete_workspace(name)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+
+    @app.route("/api/browse_dir", methods=["GET"])
+    def browse_dir():
+        """浏览目录, 返回子目录列表 (用于浏览器端文件夹选择)"""
+        import os
+        path = request.args.get("path", "").strip()
+        if not path:
+            # 返回根目录列表 (Windows 盘符)
+            drives = []
+            for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                d = letter + ":\\"
+                if os.path.exists(d):
+                    drives.append({"name": d, "path": d, "is_dir": True})
+            return jsonify({"current": "", "parent": "", "dirs": drives})
+        try:
+            if not os.path.isdir(path):
+                return jsonify({"error": "路径不存在或不是目录"}), 400
+            entries = []
+            for name in os.listdir(path):
+                full = os.path.join(path, name)
+                if os.path.isdir(full) and not name.startswith("."):
+                    entries.append({"name": name, "path": full, "is_dir": True})
+            entries.sort(key=lambda x: x["name"].lower())
+            parent = os.path.dirname(path.rstrip("\\/")) or ""
+            return jsonify({"current": path, "parent": parent, "dirs": entries})
+        except PermissionError:
+            return jsonify({"error": "无权限访问该目录"}), 403
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     return app
 
 

@@ -147,11 +147,14 @@ class SecretaryCore:
         all_tools = self.tool_manager.list_tools()
         task_lower = task.lower()
 
-        # 简单任务: 只传最少工具
-        simple_keywords = ["你好", "hello", "谢谢", "1+1", "是什么", "定义", "解释",
-                          "what is", "define", "hi"]
-        if any(kw in task_lower for kw in simple_keywords):
-            return ["current_time"]  # 简单问答几乎不需要工具
+        # 简单任务: 短文本 + 纯问候/极简问题才走轻量工具集
+        # 注意: 不能只看关键词, "核心功能是什么" 包含"是什么"但是复杂任务
+        simple_keywords = ["你好", "hello", "谢谢", "1+1", "hi", "hey",
+                          "在吗", "在不在", "你是谁"]
+        is_short = len(task.strip()) <= 15
+        if is_short and any(kw in task_lower for kw in simple_keywords):
+            # 简单问答保留基础工具, 不砍到只剩 current_time
+            return ["current_time", "web_search"]
 
         # 关键词 -> 工具映射
         tool_keywords = {

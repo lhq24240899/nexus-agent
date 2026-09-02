@@ -1,0 +1,24 @@
+description: 编写Python快速排序函数并保存到文件，运行验证排序结果
+improved_at: ''
+name: python_quick_sort_script
+required_tools:
+- file_write
+- code_exec
+steps:
+- description: 将包含快速排序函数（qsort）的Python代码写入指定路径，例如临时目录下的qsort.py，并包含main入口支持命令行传参
+  tool: file_write
+- description: 运行该Python脚本并传入待排序列表参数，验证输出是否为升序排序结果
+  tool: code_exec
+tags:
+- python
+- 排序
+- 算法
+- 脚本验证
+trigger:
+  keywords:
+  - 快速排序
+  - python排序
+  - qsort
+  - 排序脚本
+  patterns: []
+version: 1

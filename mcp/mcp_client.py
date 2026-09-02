@@ -218,6 +218,39 @@ class MCPManager:
             for t in self._mcp_tools
         ]
 
+    def restart_server(self, name: str, args: list[str] = None) -> bool:
+        """重启指定 MCP server (用新 args), 切换工作空间时更新 filesystem 路径"""
+        if name not in self.clients:
+            print(f"[MCP] restart_server: server '{name}' 不存在")
+            return False
+        old_client = self.clients[name]
+        command = old_client.command
+        env = old_client.env
+        # 1. 断开旧连接
+        old_client.disconnect()
+        # 2. 删除旧 server 的工具
+        self._mcp_tools = [t for t in self._mcp_tools if t.get("server") != name]
+        # 3. 创建新 client (用新 args)
+        new_args = args if args is not None else old_client.args
+        new_client = MCPClient(name=name, command=command, args=new_args, env=env)
+        self.clients[name] = new_client
+        # 4. 连接并获取工具
+        if new_client.connect():
+            tools = new_client.list_tools()
+            for tool in tools:
+                self._mcp_tools.append({
+                    "name": f"mcp_{name}_{tool['name']}",
+                    "server": name,
+                    "tool_name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("inputSchema", {}),
+                })
+            print(f"[MCP] {name} 已重启, 获取 {len(tools)} 个工具, args={new_args}")
+            return True
+        else:
+            print(f"[MCP] {name} 重启失败")
+            return False
+
     def has_tool(self, name: str) -> bool:
         return any(t["name"] == name for t in self._mcp_tools)
 

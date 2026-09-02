@@ -85,6 +85,23 @@ class DatabaseManager:
         """查询, 返回单行"""
         return self.conn.execute(sql, params).fetchone()
 
+    def set_path(self, db_path: str) -> None:
+        """切换数据库路径(工作空间切换时调用). 关闭旧连接, 打开新连接."""
+        global DB_PATH
+        DB_PATH = db_path
+        import os
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        with self._write_lock:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.execute("PRAGMA foreign_keys=ON")
+
 
 def get_db() -> DatabaseManager:
     """获取全局唯一的数据库管理器"""

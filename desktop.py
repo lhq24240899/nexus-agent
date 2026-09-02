@@ -11,6 +11,21 @@ from ui.web_ui import create_app
 from config import WEB_CONFIG
 
 
+class DesktopAPI:
+    """暴露给前端的桌面端 API (通过 window.pywebview.api 调用)"""
+
+    def choose_folder(self) -> str:
+        """弹出系统文件夹选择对话框, 返回选中的目录路径 (用 tkinter, Windows 上最可靠)"""
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()  # 隐藏主窗口
+        root.attributes("-topmost", True)  # 置顶
+        folder = filedialog.askdirectory(title="Select Project Folder")
+        root.destroy()
+        return folder or ""
+
+
 class NexusDesktop:
     """Nexus 桌面应用"""
 
@@ -18,6 +33,7 @@ class NexusDesktop:
         self.app = create_app()
         self.server_thread = None
         self.window = None
+        self.api = DesktopAPI()
         # 每次启动用时间戳强制 WebView2 重新加载, 彻底避免缓存旧页面
         import time as _time
         self.base_url = f"http://{WEB_CONFIG['host']}:{WEB_CONFIG['port']}/?t={int(_time.time())}"
@@ -51,6 +67,7 @@ class NexusDesktop:
             resizable=True,
             frameless=False,
             easy_drag=True,
+            js_api=self.api,
         )
 
         # 4. 启动 GUI 主循环（阻塞）

@@ -202,6 +202,16 @@ class FourLibraries:
         self.experience = Library("experience", self.vector_store, db)
         self.memory = Library("memory", self.vector_store, db)
 
+    def reconnect(self):
+        """工作空间切换后重新绑定数据库连接"""
+        from utils.db import get_db
+        db = get_db()
+        self.conn = db.conn
+        for lib in [self.tools, self.knowledge, self.experience, self.memory]:
+            lib.conn = db.conn
+            lib.db = db
+            lib._init_table()
+
     # 三模式差异化检索配置
     SEARCH_CONFIG = {
         "work": {
