@@ -80,3 +80,5 @@
   label: 文件大纲
   description: 列出Python文件的结构大纲(所有类/函数名+行号+签名), 快速了解文件结构
   category: file
+
+- name: code_edit_symbol

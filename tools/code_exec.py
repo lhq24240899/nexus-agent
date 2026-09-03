@@ -25,6 +25,55 @@ DANGEROUS_CODE_PATTERNS = [
 DANGEROUS_CODE_RE = re.compile("|".join(DANGEROUS_CODE_PATTERNS), re.IGNORECASE)
 
 
+# ===== 结构化错误解析 =====
+def parse_python_error(stderr: str, stdout: str = "") -> dict:
+    """解析 Python  traceback，返回结构化错误信息"""
+    if not stderr:
+        return None
+    combined = (stderr or "") + "\n" + (stdout or "")
+    # 匹配最后一个 Error 行
+    error_match = re.search(r"^([\w.]+Error|Exception|Warning):\s*(.+)$", combined, re.MULTILINE)
+    if not error_match:
+        return None
+    error_type = error_match.group(1)
+    error_msg = error_match.group(2).strip()
+    # 匹配文件和行号 (取最后一个 File 行)
+    file_matches = re.findall(r'File "([^"]+)", line (\d+)(?:, in (.+))?', combined)
+    if not file_matches:
+        return {"type": error_type, "message": error_msg, "file": None, "line": None, "in_func": None}
+    last_file, last_line, last_func = file_matches[-1]
+    return {
+        "type": error_type,
+        "message": error_msg,
+        "file": last_file,
+        "line": int(last_line),
+        "in_func": last_func,
+    }
+
+
+def format_error_structured(err: dict, source_code: str = "") -> str:
+    """格式化结构化错误为可读文本"""
+    if not err:
+        return ""
+    lines = []
+    lines.append(f"[错误类型] {err['type']}")
+    lines.append(f"[错误信息] {err['message']}")
+    if err.get("file"):
+        lines.append(f"[位置] {err['file']}:{err['line']}" + (f" (in {err['in_func']})" if err.get("in_func") else ""))
+    # 如果有源码，显示报错行上下文
+    if source_code and err.get("line"):
+        code_lines = source_code.splitlines()
+        ln = err["line"]
+        start = max(0, ln - 3)
+        end = min(len(code_lines), ln + 2)
+        lines.append("[代码上下文]")
+        for i in range(start, end):
+            marker = ">>>" if i == ln - 1 else "   "
+            lines.append(f"  {marker} {i+1}: {code_lines[i]}")
+    return "\n".join(lines)
+
+
+
 class CodeExecTool(BaseTool):
     name = "code_exec"
     description = (
@@ -93,6 +142,11 @@ class CodeExecTool(BaseTool):
                         output += f"\n[stderr]\n{stderr}"
                     if proc.returncode != 0:
                         output += f"\n[退出码: {proc.returncode}]"
+                        # 结构化错误解析
+                        err = parse_python_error(stderr, stdout)
+                        if err:
+                            structured = format_error_structured(err, code)
+                            output += f"\n\n===== 结构化错误 =====\n{structured}"
                     return output if output.strip() else "(代码执行完成, 无输出)"
                 except subprocess.TimeoutExpired:
                     # 超时: 杀整个进程树(Windows用taskkill /T, Unix用killpg)

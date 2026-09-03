@@ -1,0 +1,40 @@
+description: 编写Python函数，运行测试发现异常（如除零错误），添加防御性判断修复并反复验证直至通过。
+improved_at: ''
+name: python_error_handling_loop
+required_tools:
+- file_write
+- code_exec
+- file_write
+- code_exec
+- code_exec
+steps:
+- description: 创建Python文件，写入待测函数及包含边界值（如除0）的调用代码
+  tool: file_write
+- description: 执行脚本，观察输出和运行时异常，确定报错位置与类型
+  tool: code_exec
+- description: 修改源文件，在函数中添加防御性条件判断（如b==0）以拦截非法输入，返回友好错误信息
+  tool: file_write
+- description: 重新执行修正后的脚本，验证异常已消除且结果符合预期
+  tool: code_exec
+- description: 再运行一组包含正常和异常用例的测试，确认所有场景均稳定通过
+  tool: code_exec
+tags:
+- Python
+- 错误处理
+- 测试
+- 调试
+- 软件开发
+- 工作流
+trigger:
+  keywords:
+  - Python
+  - 函数
+  - 除零
+  - 异常处理
+  - 调试
+  - 测试
+  - 修复
+  - file_write
+  - code_exec
+  patterns: []
+version: 1

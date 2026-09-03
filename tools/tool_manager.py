@@ -25,6 +25,7 @@ from tools.parallel_execute import ParallelExecuteTool
 from tools.use_skill import UseSkillTool
 from tools.cleanup import CleanupTempTool
 from tools.code_ast_tools import CodeFindDefTool, CodeFindRefsTool, CodeOutlineTool
+from tools.code_edit_symbol import CodeEditSymbolTool
 
 PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
 
@@ -71,6 +72,7 @@ class ToolManager:
         "code_find_def": CodeFindDefTool,
         "code_find_refs": CodeFindRefsTool,
         "code_outline": CodeOutlineTool,
+        "code_edit_symbol": CodeEditSymbolTool,
     }
 
     def __init__(self, linux_embed=None, code_index=None, profile_manager=None, ast_index=None):
@@ -103,6 +105,10 @@ class ToolManager:
                 self.tools["code_find_refs"].ast_index = ast_index
             if "code_outline" in self.tools:
                 self.tools["code_outline"].ast_index = ast_index
+            if "code_edit_symbol" in self.tools:
+                self.tools["code_edit_symbol"].ast_index = ast_index
+                if "code_edit" in self.tools:
+                    self.tools["code_edit_symbol"].code_edit_tool = self.tools["code_edit"]
         if profile_manager and "project_analyze" in self.tools:
             self.tools["project_analyze"].profile_manager = profile_manager
 

@@ -254,6 +254,34 @@
   .tool-status.done { opacity: 0.7; }
   .tool-status.done .spinner { display: none; }
   .tool-status.done::before { content: "✓"; color: #3fb950; }
+  .tool-status.error { border-color: #f85149; background: rgba(248,81,73,0.1); }
+  .tool-status.error::before { content: "✗"; color: #f85149; }
+  .tool-status.error .tool-name { color: #f85149; }
+  .tool-status.fix { border-color: #d29922; background: rgba(210,153,34,0.1); }
+  .tool-status.fix::before { content: "🔧"; color: #d29922; }
+  .tool-status.fix .tool-name { color: #d29922; }
+  .tool-status.success { border-color: #3fb950; background: rgba(63,185,80,0.1); }
+  .tool-status.success::before { content: "✓"; color: #3fb950; }
+  .tool-status.success .tool-name { color: #3fb950; }
+  .tool-error-detail {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 12px; margin: 4px 0 8px 20px; font-size: 11px;
+    font-family: 'Consolas', 'Monaco', monospace; color: #f85149;
+    white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto;
+  }
+  .tool-error-detail .err-type { color: #ff7b72; font-weight: bold; }
+  .tool-error-detail .err-loc { color: #d29922; }
+  .tool-error-detail .err-line { color: #c9d1d9; }
+  .tool-error-detail .err-line .marker { color: #f85149; font-weight: bold; }
+  .coding-loop-indicator {
+    display: flex; align-items: center; gap: 6px; font-size: 11px;
+    color: #8b949e; margin: 4px 0; padding: 4px 8px;
+    background: #161b22; border-radius: 4px;
+  }
+  .coding-loop-indicator .step { padding: 2px 6px; border-radius: 3px; background: #21262d; }
+  .coding-loop-indicator .step.active { background: #1f6feb; color: #fff; }
+  .coding-loop-indicator .step.done { background: #238636; color: #fff; }
+  .coding-loop-indicator .arrow { color: #484f58; }
 
   /* Input区 */
   .chat-input {
@@ -1533,10 +1561,54 @@ async function sendMessage() {
           toolDiv.innerHTML = `<div class="spinner"></div><span>Calling <span class="tool-name">${event.name}</span>...</span>`;
           respDiv.insertBefore(toolDiv, bubble);
         } else if (event.type === 'tool_end') {
-          const lastTool = respDiv.querySelector('.tool-status:not(.done)');
+          const lastTool = respDiv.querySelector('.tool-status:not(.done):not(.error):not(.fix):not(.success)');
           if (lastTool) {
-            lastTool.classList.add('done');
-            lastTool.querySelector('span').innerHTML = `Tool <span class="tool-name">${event.name}</span> done`;
+            const result = event.result || '';
+            const isError = result.includes('错误:') || result.includes('失败') || result.includes('EXIT: 1') || result.includes('TimeoutExpired');
+            const hasStructuredError = result.includes('===== 结构化错误 =====');
+            const isFixTool = event.name === 'code_edit' || event.name === 'code_edit_symbol';
+            const isCodeExec = event.name === 'code_exec';
+
+            if (hasStructuredError && isCodeExec) {
+              // 结构化错误：显示详细错误卡片
+              lastTool.classList.add('error');
+              lastTool.querySelector('span').innerHTML = `Running <span class="tool-name">${event.name}</span> — found error`;
+              // 提取结构化错误信息
+              const errMatch = result.match(/\[错误类型\] (.+)/);
+              const msgMatch = result.match(/\[错误信息\] (.+)/);
+              const locMatch = result.match(/\[位置\] (.+)/);
+              let errHtml = '';
+              if (errMatch) errHtml += `<div class="err-type">${errMatch[1]}</div>`;
+              if (msgMatch) errHtml += `<div>${msgMatch[1]}</div>`;
+              if (locMatch) errHtml += `<div class="err-loc">${locMatch[1]}</div>`;
+              // 提取代码上下文
+              const ctxMatch = result.match(/\[代码上下文\]\n([\s\S]+?)(\n\n|$)/);
+              if (ctxMatch) {
+                const lines = ctxMatch[1].split('\n').map(l => {
+                  if (l.includes('>>>')) return `<div class="err-line"><span class="marker">${l.replace('>>>','').trim()}</span></div>`;
+                  return `<div class="err-line">${l.replace(/^\s+/,'')}</div>`;
+                }).join('');
+                errHtml += `<div style="margin-top:4px">${lines}</div>`;
+              }
+              if (errHtml) {
+                const errDiv = document.createElement('div');
+                errDiv.className = 'tool-error-detail';
+                errDiv.innerHTML = errHtml;
+                lastTool.parentNode.insertBefore(errDiv, lastTool.nextSibling);
+              }
+            } else if (isError) {
+              lastTool.classList.add('error');
+              lastTool.querySelector('span').innerHTML = `<span class="tool-name">${event.name}</span> failed`;
+            } else if (isFixTool) {
+              lastTool.classList.add('fix');
+              lastTool.querySelector('span').innerHTML = `Fixing with <span class="tool-name">${event.name}</span>`;
+            } else if (isCodeExec && !isError) {
+              lastTool.classList.add('success');
+              lastTool.querySelector('span').innerHTML = `Verified with <span class="tool-name">${event.name}</span> — passed`;
+            } else {
+              lastTool.classList.add('done');
+              lastTool.querySelector('span').innerHTML = `Tool <span class="tool-name">${event.name}</span> done`;
+            }
           }
         } else if (event.type === 'complete') {
           fastPath = event.record.fast_path;
@@ -1549,10 +1621,19 @@ async function sendMessage() {
       }
     }
 
-    // 完成后渲染最终结果 (Markdown)
+    // 完成后渲染最终结果 (Markdown) —— 保留工具状态区域
     const fastBadge = fastPath ? '<span class="fast-path-badge">Fast Path</span>' : '';
     bubble.classList.remove('loading');
+    // 保存工具状态区域（编码闭环可视化）
+    const toolStatuses = respDiv.querySelectorAll('.tool-status, .tool-error-detail');
+    let toolStatusHtml = '';
+    if (toolStatuses.length > 0) {
+      toolStatusHtml = '<div class="tool-timeline" style="margin:8px 0">';
+      toolStatuses.forEach(el => { toolStatusHtml += el.outerHTML; });
+      toolStatusHtml += '</div>';
+    }
     respDiv.innerHTML = contextHtml +
+      toolStatusHtml +
       `<div class="bubble">${renderMarkdown(fullText)}</div>` +
       `<div class="meta">Nexus · ${fastBadge} Time ${timing.total_s}s · Decision ${timing.decision_s}s · Tokens ${tokens.total} (in ${tokens.input} / out ${tokens.output})</div>` +
       buildActions('nexus', respDiv);

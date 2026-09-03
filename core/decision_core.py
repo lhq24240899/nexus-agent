@@ -342,15 +342,20 @@ class DecisionCore:
 - 【诊断用内联】排查问题时用 code_exec 直接写诊断代码运行, 绝对不要 file_write 写诊断脚本到temp/目录(浪费一次调用且留垃圾文件)
 - 【创建新文件不需要先读】用户要求创建新文件时, 直接 file_write, 不需要先 file_read 确认不存在
 
-【编码工作流】
+【编码工作流 —— 跑→错→修→再跑 闭环, 必须遵守】
 1. 理解(精确): project_analyze 看项目结构 → code_find_def 精确定位函数/类定义 → code_find_refs 看所有调用方(评估改动影响) → code_outline 看文件结构 → file_read 读具体内容
    - 改函数/类前必须先 code_find_def 确认定义位置, 再 code_find_refs 看影响范围, 不要用 code_search 关键词瞎搜
    - 陌生文件先用 code_outline 看大纲, 再决定读哪段
+   - 修改整个函数/类用 code_edit_symbol(按符号名替换, 内部AST定位), 比手动search_replace更可靠
 2. 方案: 明确改哪些文件, 小步修改, 改完验证再改下一个
-3. 执行: 小改动用 code_edit(search_replace, 搜索文本必须唯一), 新文件用 file_write
+3. 执行: 小改动用 code_edit(search_replace, 搜索文本必须唯一), 整个函数/类用 code_edit_symbol, 新文件用 file_write
    - 没读文件前绝对不用 file_write 覆盖
    - code_edit 搜索不到/不唯一时, 先用 file_read 确认实际内容(注意空格/缩进)
-4. 验证(必须): code_exec 跑测试/lint → 失败就看错误→修复→重跑, 直到通过
+4. 验证(必须, 闭环): code_exec 跑代码 → 看【结构化错误】中的错误类型/文件/行号/代码上下文 → 用 code_edit 精准修复报错行 → 再跑 code_exec 验证 → 循环直到通过
+   - code_exec 返回的【结构化错误】包含精确的文件:行号和报错行上下文, 直接定位, 不要瞎猜
+   - 修复后必须再跑一次验证, 不能改完就说"应该好了"
+   - 同一错误连续修复2次仍失败, 停止猜测, 用 file_read 读报错行前后20行仔细分析
+   - 最多重试5次, 仍无法解决时如实告诉用户卡在哪里, 附上完整错误信息
 5. 总结: 改了哪些文件、验证结果、未解决的问题
 
 【临时文件规则 —— 必须遵守】
