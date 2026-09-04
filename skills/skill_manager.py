@@ -4,17 +4,33 @@
 当任务匹配技能触发条件时, 自动加载技能步骤引导 Agent 执行
 支持自我改进: 记录使用结果, 用满3次后自动优化步骤
 """
-import yaml
-import re
+
 import json
+import re
 import time
 from pathlib import Path
-from typing import Optional
+
+import yaml
+
 from config import DATA_DIR
 from utils.db import get_db
 
 SKILLS_DIR = Path(__file__).parent.parent / "skills"
 DB_PATH = DATA_DIR / "nexus.db"
+
+
+def _dedup_list(items):
+    """保持原顺序去重 (去除自动生成技能时 required_tools 中的重复工具名)"""
+    if not items:
+        return []
+    seen = set()
+    result = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
 
 IMPROVE_PROMPT = """你是 Nexus Agent 的技能优化师。
 
@@ -88,7 +104,10 @@ class Skill:
         return {
             "name": self.name,
             "description": self.description,
-            "trigger": {"keywords": self.trigger_keywords, "patterns": self.trigger_patterns},
+            "trigger": {
+                "keywords": self.trigger_keywords,
+                "patterns": self.trigger_patterns,
+            },
             "steps": self.steps,
             "required_tools": self.required_tools,
             "tags": self.tags,
@@ -149,24 +168,57 @@ class SkillManager:
                 "name": "debug_python_error",
                 "description": "系统化调试 Python 错误: 读取代码→复现→定位→修复→验证",
                 "trigger": {
-                    "keywords": ["报错", "错误", "error", "traceback", "失败", "debug", "异常", "exception"],
+                    "keywords": [
+                        "报错",
+                        "错误",
+                        "error",
+                        "traceback",
+                        "失败",
+                        "debug",
+                        "异常",
+                        "exception",
+                    ],
                     "patterns": [r"(报错|错误|error|exception).{0,20}(python|py|\.py)"],
                 },
                 "steps": [
-                    {"tool": "file_read", "description": "读取报错涉及的源文件, 理解上下文"},
-                    {"tool": "code_search", "description": "搜索报错相关的函数和调用点"},
-                    {"tool": "code_exec", "description": "复现错误, 获取完整 traceback"},
+                    {
+                        "tool": "file_read",
+                        "description": "读取报错涉及的源文件, 理解上下文",
+                    },
+                    {
+                        "tool": "code_search",
+                        "description": "搜索报错相关的函数和调用点",
+                    },
+                    {
+                        "tool": "code_exec",
+                        "description": "复现错误, 获取完整 traceback",
+                    },
                     {"tool": "code_edit", "description": "根据错误信息精确定位并修复"},
-                    {"tool": "code_exec", "description": "运行验证修复是否成功, 失败则继续分析"},
+                    {
+                        "tool": "code_exec",
+                        "description": "运行验证修复是否成功, 失败则继续分析",
+                    },
                 ],
-                "required_tools": ["file_read", "code_search", "code_exec", "code_edit"],
+                "required_tools": [
+                    "file_read",
+                    "code_search",
+                    "code_exec",
+                    "code_edit",
+                ],
                 "tags": ["debug", "python"],
             },
             {
                 "name": "code_refactor",
                 "description": "代码重构工作流: 分析→理解→重构→验证",
                 "trigger": {
-                    "keywords": ["重构", "refactor", "优化代码", "代码优化", "整理代码", "clean code"],
+                    "keywords": [
+                        "重构",
+                        "refactor",
+                        "优化代码",
+                        "代码优化",
+                        "整理代码",
+                        "clean code",
+                    ],
                     "patterns": [],
                 },
                 "steps": [
@@ -176,23 +228,50 @@ class SkillManager:
                     {"tool": "code_edit", "description": "分步精确重构, 每次小改动"},
                     {"tool": "code_exec", "description": "运行测试验证重构不破坏功能"},
                 ],
-                "required_tools": ["project_analyze", "code_search", "file_read", "code_edit", "code_exec"],
+                "required_tools": [
+                    "project_analyze",
+                    "code_search",
+                    "file_read",
+                    "code_edit",
+                    "code_exec",
+                ],
                 "tags": ["refactor", "quality"],
             },
             {
                 "name": "add_feature",
                 "description": "新功能开发工作流: 理解项目→设计→实现→测试",
                 "trigger": {
-                    "keywords": ["添加", "新增", "实现", "加一个", "做一个", "feature", "implement"],
-                    "patterns": [r"(添加|新增|实现|加一个).{0,30}(功能|模块|接口|api|按钮|页面)"],
+                    "keywords": [
+                        "添加",
+                        "新增",
+                        "实现",
+                        "加一个",
+                        "做一个",
+                        "feature",
+                        "implement",
+                    ],
+                    "patterns": [
+                        r"(添加|新增|实现|加一个).{0,30}(功能|模块|接口|api|按钮|页面)"
+                    ],
                 },
                 "steps": [
-                    {"tool": "project_analyze", "description": "分析项目结构, 找到合适的添加位置"},
-                    {"tool": "file_read", "description": "阅读相关现有代码, 理解模式和约定"},
+                    {
+                        "tool": "project_analyze",
+                        "description": "分析项目结构, 找到合适的添加位置",
+                    },
+                    {
+                        "tool": "file_read",
+                        "description": "阅读相关现有代码, 理解模式和约定",
+                    },
                     {"tool": "code_edit", "description": "按项目约定实现新功能"},
                     {"tool": "code_exec", "description": "编写并运行测试验证新功能"},
                 ],
-                "required_tools": ["project_analyze", "file_read", "code_edit", "code_exec"],
+                "required_tools": [
+                    "project_analyze",
+                    "file_read",
+                    "code_edit",
+                    "code_exec",
+                ],
                 "tags": ["feature", "development"],
             },
         ]
@@ -202,7 +281,7 @@ class SkillManager:
                 encoding="utf-8",
             )
 
-    def match_skill(self, task: str, threshold: float = 0.3) -> Optional[Skill]:
+    def match_skill(self, task: str, threshold: float = 0.3) -> Skill | None:
         best = None
         best_score = 0
         for skill in self.skills.values():
@@ -233,15 +312,21 @@ class SkillManager:
             return skill.to_workflow_text()
         return ""
 
-    def create_skill(self, name: str, description: str,
-                     trigger_keywords: list[str], steps: list[dict],
-                     required_tools: list[str] = None, tags: list[str] = None) -> str:
+    def create_skill(
+        self,
+        name: str,
+        description: str,
+        trigger_keywords: list[str],
+        steps: list[dict],
+        required_tools: list[str] = None,
+        tags: list[str] = None,
+    ) -> str:
         data = {
             "name": name,
             "description": description,
             "trigger": {"keywords": trigger_keywords, "patterns": []},
             "steps": steps,
-            "required_tools": required_tools or [],
+            "required_tools": _dedup_list(required_tools),
             "tags": tags or [],
             "version": 1,
             "improved_at": "",
@@ -254,15 +339,26 @@ class SkillManager:
         self.skills[name] = Skill(data)
         return f"技能已创建: {name} ({len(steps)} 步)"
 
-    def record_usage(self, skill_name: str, task: str, success: bool,
-                     tools_used: list[str], duration: float):
+    def record_usage(
+        self,
+        skill_name: str,
+        task: str,
+        success: bool,
+        tools_used: list[str],
+        duration: float,
+    ):
         """记录技能使用结果 + 更新置信度 + 连续失败计数"""
         self.db.execute(
             "INSERT INTO skill_usage (skill_name, task, success, tools_used, tool_count, duration, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (skill_name, task[:200], 1 if success else 0,
-             json.dumps(tools_used, ensure_ascii=False),
-             len(tools_used), duration,
-             time.strftime("%Y-%m-%d %H:%M:%S")),
+            (
+                skill_name,
+                task[:200],
+                1 if success else 0,
+                json.dumps(tools_used, ensure_ascii=False),
+                len(tools_used),
+                duration,
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+            ),
         )
         # 更新置信度
         if skill_name in self.skills:
@@ -285,9 +381,14 @@ class SkillManager:
             (skill_name, limit),
         ).fetchall()
         return [
-            {"task": r[0], "success": bool(r[1]),
-             "tools_used": json.loads(r[2]) if r[2] else [],
-             "tool_count": r[3], "duration": r[4], "timestamp": r[5]}
+            {
+                "task": r[0],
+                "success": bool(r[1]),
+                "tools_used": json.loads(r[2]) if r[2] else [],
+                "tool_count": r[3],
+                "duration": r[4],
+                "timestamp": r[5],
+            }
             for r in rows
         ]
 
@@ -321,7 +422,7 @@ class SkillManager:
         history_text = "\n".join(history_lines)
 
         current_steps = "\n".join(
-            f"{i+1}. [{s.get('tool', '?')}] {s.get('description', '')}"
+            f"{i + 1}. [{s.get('tool', '?')}] {s.get('description', '')}"
             for i, s in enumerate(skill.steps)
         )
 
@@ -329,13 +430,18 @@ class SkillManager:
             resp = self.llm_client.chat.completions.create(
                 model=self.model,
                 temperature=0.3,
-                messages=[{"role": "user", "content": IMPROVE_PROMPT.format(
-                    name=skill.name,
-                    description=skill.description,
-                    current_steps=current_steps,
-                    count=len(history),
-                    usage_history=history_text,
-                )}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": IMPROVE_PROMPT.format(
+                            name=skill.name,
+                            description=skill.description,
+                            current_steps=current_steps,
+                            count=len(history),
+                            usage_history=history_text,
+                        ),
+                    }
+                ],
             )
             content = resp.choices[0].message.content.strip()
             # 提取 JSON
@@ -353,7 +459,9 @@ class SkillManager:
             old_step_count = len(skill.steps)
             backup_file = SKILLS_DIR / f"{skill_name}_v{skill.version}.yaml.bak"
             backup_file.write_text(
-                yaml.dump(skill.to_dict(), allow_unicode=True, default_flow_style=False),
+                yaml.dump(
+                    skill.to_dict(), allow_unicode=True, default_flow_style=False
+                ),
                 encoding="utf-8",
             )
             # 只保留最近3个备份
@@ -372,7 +480,9 @@ class SkillManager:
             self._save_skill(skill)
 
             # 清空该技能的使用记录(改进后重新积累)
-            self.db.execute("DELETE FROM skill_usage WHERE skill_name = ?", (skill_name,))
+            self.db.execute(
+                "DELETE FROM skill_usage WHERE skill_name = ?", (skill_name,)
+            )
 
             return {
                 "ok": True,
@@ -420,7 +530,6 @@ class SkillManager:
         self._load_skills()
         return f"技能已重载, 当前 {len(self.skills)} 个技能"
 
-
     # ========== 技能生命周期管理 ==========
 
     def get_skill_stats(self, skill_name: str) -> dict:
@@ -445,18 +554,21 @@ class SkillManager:
         result = []
         for name, skill in self.skills.items():
             stats = self.get_skill_stats(name)
-            result.append({
-                "name": name,
-                "description": skill.description,
-                "version": skill.version,
-                "confidence": round(skill.confidence, 2),
-                **stats,
-            })
+            result.append(
+                {
+                    "name": name,
+                    "description": skill.description,
+                    "version": skill.version,
+                    "confidence": round(skill.confidence, 2),
+                    **stats,
+                }
+            )
         result.sort(key=lambda x: x["total"], reverse=True)
         return result
 
-    def cleanup_low_quality(self, min_success_rate: float = 40.0,
-                            min_usage: int = 5, archive_days: int = 90) -> dict:
+    def cleanup_low_quality(
+        self, min_success_rate: float = 40.0, min_usage: int = 5, archive_days: int = 90
+    ) -> dict:
         """
         自动淘汰低质量技能
         - 成功率 < min_success_rate 且使用 >= min_usage -> 删除
@@ -464,6 +576,7 @@ class SkillManager:
         返回淘汰统计
         """
         import time as _time
+
         deleted = []
         archived = []
         now = _time.time()
@@ -475,23 +588,36 @@ class SkillManager:
             # 低成功率且使用次数足够 -> 删除
             if stats["total"] >= min_usage and stats["success_rate"] < min_success_rate:
                 self._delete_skill(name)
-                deleted.append({"name": name, "reason": f"成功率{stats['success_rate']}%",
-                                "usage": stats["total"]})
+                deleted.append(
+                    {
+                        "name": name,
+                        "reason": f"成功率{stats['success_rate']}%",
+                        "usage": stats["total"],
+                    }
+                )
                 continue
 
             # 长期未使用 -> 归档
             if stats["last_used"]:
                 try:
-                    last_ts = _time.mktime(_time.strptime(stats["last_used"], "%Y-%m-%d %H:%M:%S"))
+                    last_ts = _time.mktime(
+                        _time.strptime(stats["last_used"], "%Y-%m-%d %H:%M:%S")
+                    )
                     days_unused = (now - last_ts) / 86400
                     if days_unused > archive_days and stats["total"] > 0:
                         self._archive_skill(name)
-                        archived.append({"name": name, "reason": f"{int(days_unused)}天未使用"})
+                        archived.append(
+                            {"name": name, "reason": f"{int(days_unused)}天未使用"}
+                        )
                 except Exception:
                     pass
 
-        return {"deleted": deleted, "archived": archived,
-                "total_deleted": len(deleted), "total_archived": len(archived)}
+        return {
+            "deleted": deleted,
+            "archived": archived,
+            "total_deleted": len(deleted),
+            "total_archived": len(archived),
+        }
 
     def _delete_skill(self, skill_name: str):
         """删除技能文件和内存引用"""
@@ -513,7 +639,9 @@ class SkillManager:
             skill_file.rename(archived_file)
         self.skills.pop(skill_name, None)
 
-    def find_similar_skill(self, description: str, threshold: float = 0.7) -> Optional[str]:
+    def find_similar_skill(
+        self, description: str, threshold: float = 0.7
+    ) -> str | None:
         """
         查找相似技能(基于描述的关键词重叠)
         返回最相似的技能名, 无相似则返回 None
@@ -537,8 +665,9 @@ class SkillManager:
             return best_name
         return None
 
-    def match_skills(self, task: str, top_k: int = 3,
-                     threshold: float = 0.3) -> list[Skill]:
+    def match_skills(
+        self, task: str, top_k: int = 3, threshold: float = 0.3
+    ) -> list[Skill]:
         """
         匹配多个技能, 按匹配度排序, 最多返回 top_k 个
         """
@@ -560,9 +689,14 @@ class SkillManager:
             parts.append(skill.to_workflow_text())
         return "\n\n".join(parts)
 
-    def should_generate_skill(self, task: str, tool_calls: list,
-                              result: str, min_tool_calls: int = 3,
-                              min_similar_tasks: int = 2) -> bool:
+    def should_generate_skill(
+        self,
+        task: str,
+        tool_calls: list,
+        result: str,
+        min_tool_calls: int = 3,
+        min_similar_tasks: int = 2,
+    ) -> bool:
         """
         判断是否应该从经验生成技能
         条件:
@@ -600,8 +734,9 @@ class SkillManager:
             pass
         return True
 
-    def auto_generate_skill(self, task: str, tool_calls: list,
-                            result: str) -> Optional[str]:
+    def auto_generate_skill(
+        self, task: str, tool_calls: list, result: str
+    ) -> str | None:
         """
         从任务经验自动生成技能
         成功返回技能名, 不满足条件返回 None
@@ -616,17 +751,20 @@ class SkillManager:
             tool_name = tc.get("tool", "") if isinstance(tc, dict) else str(tc)
             if tool_name and tool_name not in seen_tools:
                 seen_tools.add(tool_name)
-                steps.append({
-                    "tool": tool_name,
-                    "description": f"使用 {tool_name} 完成相关操作",
-                })
+                steps.append(
+                    {
+                        "tool": tool_name,
+                        "description": f"使用 {tool_name} 完成相关操作",
+                    }
+                )
 
         if len(steps) < 2:
             return None
 
         # 生成技能名(从任务关键词提取)
         import re
-        name_words = re.findall(r'[a-zA-Z]+|[一-龥]+', task.lower())
+
+        name_words = re.findall(r"[a-zA-Z]+|[一-龥]+", task.lower())
         skill_name = "_".join(name_words[:4]) if name_words else "auto_skill"
         skill_name = skill_name[:50]
 

@@ -208,6 +208,7 @@ class CodeIndex:
 # ========== 多语言并发代码索引 (tree-sitter + ThreadPool + 按项目分库) ==========
 import ast as _ast
 import sqlite3 as _sqlite3
+import time as _time
 from pathlib import Path as _Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -284,12 +285,59 @@ class MultiLangCodeIndex:
             CREATE INDEX IF NOT EXISTS idx_sym_name ON symbols(name);
             CREATE INDEX IF NOT EXISTS idx_ref_name ON refs(symbol_name);
             CREATE INDEX IF NOT EXISTS idx_sym_file ON symbols(file_path);
+            CREATE TABLE IF NOT EXISTS index_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
         """)
         conn.commit()
         conn.close()
 
-    def build(self, progress_cb=None):
-        """并发构建索引"""
+    def _is_index_valid(self) -> bool:
+        """检查索引是否有效: 项目路径匹配且有符号数据"""
+        try:
+            conn = _sqlite3.connect(self.db_path)
+            # 检查项目路径
+            row = conn.execute("SELECT value FROM index_meta WHERE key='project_root'").fetchone()
+            if not row or row[0] != str(self.root):
+                conn.close()
+                return False
+            # 检查是否有符号数据
+            count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+            conn.close()
+            return count > 0
+        except Exception:
+            return False
+
+    def _mark_index_built(self):
+        """标记索引已构建"""
+        try:
+            conn = _sqlite3.connect(self.db_path)
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("project_root", str(self.root))
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("built_at", str(int(_time.time())))
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    def build(self, progress_cb=None, force: bool = False):
+        """并发构建索引. force=False 时若索引已存在且有效则跳过(缓存)"""
+        if not force and self._is_index_valid():
+            # 缓存命中: 直接返回已有索引
+            try:
+                conn = _sqlite3.connect(self.db_path)
+                sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+                ref_count = conn.execute("SELECT COUNT(*) FROM refs").fetchone()[0]
+                conn.close()
+                return {"files": -1, "symbols": sym_count, "refs": ref_count, "cached": True}
+            except Exception:
+                pass  # 缓存读取失败, 继续重建
         conn = _sqlite3.connect(self.db_path)
         conn.execute("DELETE FROM symbols")
         conn.execute("DELETE FROM refs")
@@ -333,6 +381,7 @@ class MultiLangCodeIndex:
         )
         conn.commit()
         conn.close()
+        self._mark_index_built()
         return {"files": total, "symbols": len(all_symbols), "refs": len(all_refs)}
 
     def _parse_file(self, fpath):

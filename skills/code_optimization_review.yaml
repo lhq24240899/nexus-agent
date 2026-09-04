@@ -1,0 +1,75 @@
+description: 审查项目代码，分析架构、性能与维护性问题，输出可执行的优化建议。
+improved_at: ''
+name: code_optimization_review
+required_tools:
+- project_analyze
+- file_list
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- file_list
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- file_list
+- code_exec
+- mcp_project_filesystem_read_text_file
+- mcp_project_filesystem_read_text_file
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+steps:
+- description: 获取项目整体概览，了解技术栈、模块划分与架构结构，确定审查重点方向。
+  tool: project_analyze
+- description: 枚举项目文件清单，识别入口文件、核心模块、配置、测试及文档等关键文件。
+  tool: file_list
+- description: 逐一读取关键源码与配置文件，理解核心逻辑、模块职责和潜在问题点。
+  tool: mcp_project_filesystem_read_text_file
+- description: 运行脚本进行静态分析，统计代码规模、复杂度、重复度、依赖关系等指标。
+  tool: code_exec
+- description: 针对分析过程中发现的疑点，读取对应源码或配置进一步验证问题根因。
+  tool: mcp_project_filesystem_read_text_file
+- description: 执行验证性代码或实验，确认性能瓶颈、逻辑缺陷及优化优先级。
+  tool: code_exec
+- description: 阅读项目文档、注释、测试及相关配置，补充上下文信息并形成优化建议论据。
+  tool: mcp_project_filesystem_read_text_file
+tags:
+- 代码审查
+- 代码优化
+- 重构
+- 静态分析
+- 最佳实践
+trigger:
+  keywords:
+  - 代码优化
+  - 审查项目代码
+  - 找优化点
+  - code review
+  - 重构建议
+  - 技术债务
+  - 项目分析
+  patterns: []
+version: 1

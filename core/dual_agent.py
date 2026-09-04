@@ -9,6 +9,7 @@ import json
 import threading
 import re
 from pathlib import Path
+from config import BASE_DIR
 from core.decision_core import DecisionCore
 from core.secretary_core import SecretaryCore
 from system.linux_embed import LinuxEmbed
@@ -40,9 +41,10 @@ COMPLEX_KEYWORDS = [
     "性能优化", "压测", "全链路", "搭建一套", "设计并实现",
     # 明确需要四库 / 历史经验
     "知识库", "经验库", "四库", "历史经验", "之前的记录", "复盘",
-    # 编码任务 (写代码本身就需要工具调用+验证, 不值得省秘书调用)
-    "写代码", "写一个", "实现", "代码", "函数", "算法", "demo",
-    "脚本", "程序", "开发", "编码", "编程", "生成代码", "创建文件",
+    # 编码任务 (只有明确表示"要写/改代码"才触发, 读取类不触发)
+    "写代码", "写一个", "实现", "生成代码", "创建文件", "新建文件",
+    "修改代码", "重构代码", "优化代码", "修复代码", "编码", "编程",
+    "开发一个", "做一个", "写个", "实现一个",
 ]
 # 超过该长度的任务默认视为复杂任务 (长描述通常包含多步诉求)
 COMPLEX_TASK_MIN_LEN = 20
@@ -94,8 +96,8 @@ class DualCoreAgent:
         # MCP 客户端 (连接外部 MCP server, 扩展工具生态)
         self.mcp_manager = MCPManager()
         self.tool_manager.set_mcp_manager(self.mcp_manager)
-        # 用当前工作空间路径重启 filesystem MCP (mcp_servers.json 里硬编码了 default 路径)
-        if ws.get("path") and ws["path"] != "D:/nexus_agent" and ws["path"] != "D:\\nexus_agent":
+        # 用当前工作空间路径重启 filesystem MCP (非默认项目才需要重启)
+        if ws.get("path") and Path(ws["path"]).resolve() != BASE_DIR.resolve():
             try:
                 self.mcp_manager.restart_server(
                     "project_filesystem",
@@ -117,6 +119,7 @@ class DualCoreAgent:
                    f"{len(self.tool_manager.list_tools())} 个工具: "
                    + ", ".join(t["name"] for t in self.tool_manager.list_tools()))
         self.task_history: list[dict] = []
+        self._index_building = False  # 代码索引是否正在后台构建
         # 会话级模式 (必须在 _load_conversation 之前初始化)
         self.current_mode = "work"
         # 按模式分开存储对话历史: work(编码) / chat(聊天) / brainstorm(头脑风暴)
@@ -177,9 +180,22 @@ class DualCoreAgent:
         get_db().set_path(str(self.workspace_mgr.library_db()))
         # 重建四库连接(新数据库)
         self.secretary.libs.reconnect()
-        # 重建代码索引(新项目根目录)
+        # 重建代码索引(新项目根目录) - 异步构建, 不阻塞切换
         self.ast_index = MultiLangCodeIndex(project_root=ws["path"], max_workers=4)
-        self.ast_index.build()
+        self._index_building = True
+        import threading as _threading
+        def _build_index_async():
+            try:
+                result = self.ast_index.build()
+                if result.get("cached"):
+                    logger.log("system", "代码索引缓存命中", f"{result['symbols']}个符号, 跳过重建")
+                else:
+                    logger.log("system", "代码索引构建完成", f"{result['files']}个文件, {result['symbols']}个符号")
+            except Exception as e:
+                logger.log("system", "代码索引构建失败", str(e))
+            finally:
+                self._index_building = False
+        _threading.Thread(target=_build_index_async, daemon=True).start()
         # 注入到工具
         self.tool_manager.ast_index = self.ast_index
         for tname in ["code_find_def", "code_find_refs", "code_outline"]:

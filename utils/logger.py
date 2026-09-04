@@ -4,15 +4,46 @@
 内存策略: 日志文件只增不减, 启动时不再全量载入内存,
 而是流式读取并只保留最后 MAX_IN_MEMORY 条 (deque 自动淘汰),
 避免运行越久内存占用越大。
+
+日志轮转: agent_log.jsonl 超过 1MB 自动切割, 保留最近 3 个
+(agent_log.jsonl.1 / .2 / .3), 防止日志无限膨胀。
 """
+
 import json
+import os
 import threading
 import time
 from collections import deque
+
 from config import DATA_DIR
 
 LOG_FILE = DATA_DIR / "agent_log.jsonl"
 MAX_IN_MEMORY = 500
+MAX_LOG_BYTES = 1 * 1024 * 1024  # 超过 1MB 触发轮转
+MAX_LOG_BACKUPS = 3  # 保留最近 3 个历史日志
+
+
+def _rotate_if_needed():
+    """日志文件超过阈值时轮转: .log -> .log.1 -> .log.2 -> .log.3 (丢弃最旧)"""
+    try:
+        if not LOG_FILE.exists():
+            return
+        if LOG_FILE.stat().st_size <= MAX_LOG_BYTES:
+            return
+        # 先删除最旧备份
+        oldest = f"{LOG_FILE}.{MAX_LOG_BACKUPS}"
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        # 依次右移: .3 <- .2 <- .1
+        for i in range(MAX_LOG_BACKUPS - 1, 0, -1):
+            src = f"{LOG_FILE}.{i}"
+            dst = f"{LOG_FILE}.{i + 1}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+        # 当前日志 -> .1
+        os.replace(LOG_FILE, f"{LOG_FILE}.1")
+    except OSError:
+        pass
 
 
 class AgentLogger:
@@ -41,13 +72,15 @@ class AgentLogger:
         entry = {
             "time": time.strftime("%H:%M:%S"),
             "timestamp": time.time(),
-            "role": role,           # secretary / nexus / system / linux
-            "action": action,       # 动作描述
-            "detail": detail,       # 详细内容
+            "role": role,  # secretary / nexus / system / linux
+            "action": action,  # 动作描述
+            "detail": detail,  # 详细内容
             **extra,
         }
         with self._lock:
             self.logs.append(entry)
+            # 写入前先检查是否需要轮转 (锁内保证多线程安全)
+            _rotate_if_needed()
             # 锁内追加写文件, 保证多线程日志不交错
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")

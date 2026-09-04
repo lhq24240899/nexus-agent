@@ -39,8 +39,9 @@ class MCPClient:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                env={**__import__("os").environ, **self.env},
+                encoding="utf-8",
+                errors="replace",
+                env={**__import__("os").environ, **self.env, "PYTHONIOENCODING": "utf-8", "NODE_OPTIONS": "--encoding=utf-8"},
                 bufsize=1,
             )
             # 发送 initialize 请求

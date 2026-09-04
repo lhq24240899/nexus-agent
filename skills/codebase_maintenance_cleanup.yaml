@@ -1,0 +1,159 @@
+description: 执行日志轮转、技能YAML去重和死配置清理等代码库维护任务，并通过Python内联方式验证脚本运行。
+improved_at: ''
+name: codebase_maintenance_cleanup
+required_tools:
+- git
+- code_search
+- code_search
+- code_search
+- code_search
+- file_read
+- file_read
+- file_read
+- file_read
+- code_search
+- file_read
+- file_read
+- code_search
+- code_search
+- code_search
+- file_read
+- file_read
+- code_find_def
+- code_find_def
+- code_find_def
+- code_outline
+- code_outline
+- file_read
+- file_read
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- file_read
+- linux_terminal
+- linux_terminal
+- code_exec
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- code_search
+- code_search
+- file_read
+- file_read
+- code_search
+- code_edit
+- code_edit
+- code_edit
+- code_edit
+- code_edit
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- file_write
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- linux_terminal
+- file_write
+steps:
+- description: 定位相关配置、工具函数和脚本，梳理日志写入、YAML生成和COST_CONFIG配置的调用关系
+  tool: code_search
+- description: 读取目标文件内容，了解日志轮转逻辑、技能生成代码和配置过期引用的具体位置
+  tool: file_read
+- description: 查找关键函数定义，如日志写入函数、技能保存函数和相关常量配置
+  tool: code_find_def
+- description: 查看文件结构，定位修改点所在代码块
+  tool: code_outline
+- description: 修改代码：添加日志文件大小检测与轮转逻辑（超过1MB自动切割，保留最近3个）；修复技能YAML生成时required_tools去重；移除COST_CONFIG中的text-embedding-v3和清理run.py过期引用
+  tool: code_edit
+- description: 运行命令检查代码变更、查看git diff、执行验证脚本或复制脚本到临时目录运行
+  tool: linux_terminal
+- description: 若磁盘上脚本因路径/权限问题无法直接执行，用python内联方式运行：python -c "exec(open('脚本路径').read())"
+  tool: code_exec
+- description: 编写验证脚本或测试用例，确认日志轮转、去重和配置清理均生效
+  tool: file_write
+tags:
+- 维护
+- 日志
+- 配置
+- 去重
+- Python
+- git
+- 验证
+trigger:
+  keywords:
+  - 日志切割
+  - 轮转
+  - 去重
+  - 死配置
+  - 清理
+  - required_tools
+  - embedding
+  - 截图清理
+  - 维护
+  patterns: []
+version: 1

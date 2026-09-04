@@ -36,6 +36,8 @@ class DecisionCore:
         self.last_tool_errors = 0
         # 连续代码执行失败次数 (用于自修复闭环, 每次 decide 开头重置)
         self.consecutive_code_failures = 0
+        # 本次任务是否已用 code_find_def 定位 (改代码前必须先定位)
+        self._used_ast_locate = False
         # 模式: work=完整编码助手, chat=轻量聊天 (影响系统提示词/工具/模型)
         self.mode = "work"
         # 模型覆盖: None 用默认决策模型, 非 None 时临时切换 (聊天模式用 flash)
@@ -58,31 +60,56 @@ class DecisionCore:
             return self.BRAINSTORM_SYSTEM_PROMPT
         return self.SYSTEM_PROMPT
 
+    # 代码任务关键词: 命中则用低 temperature 保证代码确定性
+    CODE_TASK_KEYWORDS = [
+        "写代码", "写一个", "实现", "代码", "函数", "算法", "demo",
+        "脚本", "程序", "开发", "编码", "编程", "生成代码", "创建文件",
+        "修改", "修复", "重构", "debug", "调试", "bug", "类", "方法",
+        "api", "接口", "模块", "组件",
+    ]
+
+    def _is_code_task(self) -> bool:
+        """判断当前任务是否是代码任务"""
+        task = getattr(self, "current_task", "") or ""
+        return any(kw in task.lower() for kw in self.CODE_TASK_KEYWORDS)
+
     def _active_temperature(self) -> float:
-        """按模式返回 temperature: brainstorm高发散, chat自然, work稳定"""
+        """按模式返回 temperature: brainstorm高发散, chat自然, work稳定
+        代码任务强制 0.3 保证确定性, 减少随机错误"""
         if self.mode == "brainstorm":
             return 0.95
         if self.mode == "chat":
             return 0.5
+        # work 模式: 代码任务用 0.3, 其他用 0.7
+        if self._is_code_task():
+            return 0.3
         return self.temperature  # work 默认 0.7
     def _validate_tool_call(self, tool_name: str, args: dict) -> str | None:
         """工具调用校验. 返回 None 表示通过, 返回字符串表示拦截原因(作为工具结果返回给模型)"""
         # code_exec 误用检测
         if tool_name == "code_exec":
             code = (args.get("code") or "")
+            code_lower = code.lower()
             # 检测安装命令
             if any(k in code for k in ["pip install", "npm install", "playwright install", "apt install", "brew install"]):
                 return ("[工具校验拦截] code_exec 不适合安装命令(只有15秒超时, 安装必然超时)。\n"
                         "请改用 linux_terminal 工具执行安装命令。")
-            # 检测用 code_exec 写持久文件
+            # 检测用 code_exec 写持久文件 (测试脚本写临时文件不拦截)
+            is_test_script = any(k in code_lower for k in ["test_", "_test.py", "temp/", "tmp/", "tempfile", "unittest", "pytest"])
             if re.search(r'open\s*\([^)]*[\'\"](w|a)[\'\"]', code):
-                if "tempfile" not in code and "tmp" not in code.lower():
+                if not is_test_script and "tmp" not in code_lower:
                     return ("[工具校验拦截] code_exec 是临时环境(执行完就删), 不适合写持久文件。\n"
-                            "请改用 file_write 工具写文件。")
-            # 检测用 code_exec 读文件
-            if any(k in code for k in [".read()", ".readlines()", "for line in open"]):
-                if "tempfile" not in code:
+                            "请改用 file_write 工具写文件。测试脚本写临时文件不受此限。")
+            # 检测用 code_exec 读文件 (只拦截明显的 open().read() 模式, 不拦截 .read() 因为可能是读字符串/网络响应)
+            if re.search(r'open\s*\([^)]*\)\.read', code) or "for line in open" in code:
+                if not is_test_script:
                     return ("[工具校验拦截] 读文件请用 file_read 工具, 不要用 code_exec 执行 open().read()。")
+        # code_edit 前置检查: 改代码前必须先用 code_find_def 定位
+        elif tool_name in ("code_edit", "code_edit_symbol"):
+            if not self._used_ast_locate:
+                return ("[工具校验拦截] 改代码前必须先用 code_find_def 精确定位函数/类定义, "
+                        "再用 code_find_refs 看所有调用处评估影响范围。\n"
+                        "绝对不要凭记忆猜位置! 请先调用 code_find_def(symbol_name=...) 定位。")
         # linux_terminal 误用检测
         elif tool_name == "linux_terminal":
             cmd = (args.get("command") or "")
@@ -90,8 +117,8 @@ class DecisionCore:
                 return "[工具校验拦截] 读文件请用 file_read 工具, 不要用 linux_terminal 执行 cat/less/head。"
             if re.match(r'^\s*(ls|dir)\s*$', cmd) or re.match(r'^\s*ls\s+-', cmd):
                 return "[工具校验拦截] 列目录请用 file_list 工具, 不要用 linux_terminal 执行 ls。"
-            if re.match(r'^\s*python\s+-c', cmd):
-                return "[工具校验拦截] 执行 Python 代码请用 code_exec 工具(有危险代码检测和超时保护)。"
+            if re.match(r'^\s*(python|python3|python\.exe|\.venv/[^\s]+python\.exe)\s+(-c|\S+\.py)', cmd):
+                return "[工具校验拦截] 执行 Python 代码请用 code_exec 工具(有危险代码检测和超时保护), 不要用 linux_terminal 跑 Python 脚本。"
         return None
 
     # 中途过程语言特征 (中英文, 出现这些词说明输出的是过程而非结论)
@@ -227,6 +254,9 @@ class DecisionCore:
             tool_name = item["name"]
             tool_args = item["args"]
             self.last_tools_used.append(tool_name)
+            # 记录 AST 定位使用 (改代码前必须先定位)
+            if tool_name == "code_find_def":
+                self._used_ast_locate = True
             if yield_event:
                 yield_event({"type": "tool_start", "name": tool_name,
                              "args": json.dumps(tool_args, ensure_ascii=False)[:80]})
@@ -334,6 +364,7 @@ class DecisionCore:
 - 【最高优先级】code_exec 只用于运行验证(跑测试/看输出), 绝对不用于创建/写入文件
 - 【最高优先级】修改已有文件: 先 file_read 读内容 → code_edit 精准修改, 不要用 file_write 整文件覆盖(除非大改)
 - 【最高优先级】创建新文件: 直接 file_write, 不需要先 file_read(文件不存在读了也是错)
+- 【最高优先级】改代码前必须先 AST 定位: 改任何函数/类/方法前, 必须先 code_find_def 精确定义位置 + code_find_refs 看所有调用处, 绝对不要凭记忆猜位置或用 code_search 瞎搜! 跳过这步会被工具校验拦截
 - 修改已有文件: 小改用 code_edit, 大改用 file_write(先 file_read 读内容)
 - 查文件内容: 用 file_read, 不要用 code_exec 读文件
 - 列目录: 用 file_list, 不要用 code_exec 执行 ls
@@ -515,11 +546,13 @@ class DecisionCore:
     def decide(self, task: str, context: str, history_text: str = "",
                allowed_tools: list[str] = None) -> str:
         """非流式决策. allowed_tools: 只允许使用的工具名列表, None=全部"""
+        self.current_task = task  # 记录当前任务, 供 temperature 判断
         logger.log("nexus", "开始决策",
-                   f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}")
+                   f"任务: {task[:50]}, 工具: {len(allowed_tools) if allowed_tools else '全部'}, temp={self._active_temperature()}")
         self.last_tools_used = []
         self.last_tool_errors = 0
         self.consecutive_code_failures = 0
+        self._used_ast_locate = False  # 重置 AST 定位标记
         self.error_diagnoser.reset()
         messages = self._build_messages(task, context, history_text)
         total_input = 0
@@ -604,6 +637,7 @@ class DecisionCore:
 
     def decide_stream(self, task: str, context: str, history_text: str = "",
                       allowed_tools: list[str] = None):
+        self.current_task = task  # 记录当前任务, 供 temperature 判断
         """
         流式决策, yield 事件字典:
         {"type": "token", "content": "..."}
@@ -778,9 +812,11 @@ class DecisionCore:
                     "content": (
                         "【失败拦截】上一次工具执行失败了(退出码非0或有错误)。"
                         "你绝对不能在回答中说'已完成/已成功/验证通过'。"
-                        "你必须: 1)分析错误原因 2)用code_edit修复 3)再用code_exec验证直到成功 "
-                        "4)如果无法修复, 如实告诉用户卡在哪里、错误信息是什么。"
-                        "现在继续修复, 不要总结。"
+                        "你必须: 1)分析错误原因 2)如果是读取文件类工具(mcp_read/read_text_file)失败, "
+                        "立即换用 file_read 工具, 不要反复重试同一个失败工具! "
+                        "3)如果是代码错误, 用code_edit修复 4)再用code_exec验证直到成功 "
+                        "5)如果无法修复, 如实告诉用户卡在哪里、错误信息是什么。"
+                        "现在继续, 不要总结。"
                     ),
                 })
                 logger.log("nexus", "失败拦截", "检测到上次工具失败, 注入修复提醒")

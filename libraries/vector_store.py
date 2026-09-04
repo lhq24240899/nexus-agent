@@ -113,10 +113,20 @@ class VectorStore:
                 model=EMBEDDING_CONFIG["model"],
                 input=text[:8000],
             )
-            return resp.data[0].embedding
+            result = resp.data[0].embedding
+            # 成功后重置失败计数
+            self._embed_fail_count = 0
+            return result
         except Exception as e:
-            print(f"[embedding] 调用失败, 回退 TF-IDF: {e}")
-            self._mode = "tfidf"
+            self._embed_fail_count = getattr(self, "_embed_fail_count", 0) + 1
+            # 连续失败5次后临时降级, 但30秒后自动恢复尝试
+            if self._embed_fail_count >= 5:
+                import time as _time
+                if not hasattr(self, "_embed_cooldown_until") or _time.time() > self._embed_cooldown_until:
+                    self._embed_cooldown_until = _time.time() + 30
+                    print(f"[embedding] 连续失败{self._embed_fail_count}次, 临时降级30秒: {e}")
+                return []
+            print(f"[embedding] 调用失败({self._embed_fail_count}/5), 本次回退 TF-IDF: {e}")
             return []
 
     @staticmethod

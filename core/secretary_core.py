@@ -555,7 +555,7 @@ class SecretaryCore:
                     line = line.strip().lstrip("-*0123456789. ")
                     if line and "项目事实" in line and len(line) > 8:
                         # 去重: 检查记忆库是否已有相同事实
-                        existing = self.libs.memory.search(line[:30], limit=5) if hasattr(self.libs.memory, 'search') else []
+                        existing = self.libs.memory.search(line[:30], top_k=5) if hasattr(self.libs.memory, 'search') else []
                         if not any(line[:30] in (e.get('content','') if isinstance(e, dict) else str(e)) for e in existing):
                             self.libs.memory.add(
                                 line,
