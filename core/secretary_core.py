@@ -926,8 +926,8 @@ class SecretaryCore:
 
     def _generate_tests_async(self, task: str, tools_used: list):
         """后台生成单元测试:
-        1. 从任务描述中提取要测试的函数
-        2. 生成 pytest 测试用例 (最多3个: 正常+边界+异常)
+        1. 用 git diff 获取实际改动的代码
+        2. 让秘书模型基于实际代码生成 pytest 测试用例
         3. 写入临时目录并运行
         4. 结果存入经验库
         """
@@ -937,11 +937,38 @@ class SecretaryCore:
             import subprocess
             import sys
 
-            # 1. 让秘书模型生成测试代码
+            # 1. 用 git diff 获取实际改动的代码 (最近一次提交后的改动)
+            changed_code = ""
+            try:
+                diff_result = subprocess.run(
+                    ["git", "diff", "HEAD", "--unified=3"],
+                    capture_output=True, text=True, timeout=10,
+                    cwd=os.getcwd(), encoding="utf-8", errors="replace"
+                )
+                if diff_result.returncode == 0 and diff_result.stdout:
+                    changed_code = diff_result.stdout[:3000]  # 限制长度避免超token
+            except Exception:
+                pass
+
+            # 如果没有 git diff (可能是新文件未跟踪), 尝试 git status
+            if not changed_code:
+                try:
+                    status_result = subprocess.run(
+                        ["git", "status", "--short"],
+                        capture_output=True, text=True, timeout=10,
+                        cwd=os.getcwd(), encoding="utf-8", errors="replace"
+                    )
+                    if status_result.returncode == 0:
+                        changed_code = f"变更文件:\n{status_result.stdout[:500]}"
+                except Exception:
+                    pass
+
+            # 2. 让秘书模型基于实际代码生成测试
+            code_context = f"\n\n实际改动代码(git diff):\n```\n{changed_code}\n```" if changed_code else ""
             prompt = f"""为以下任务中改动的函数生成 pytest 单元测试。
 
 任务: {task[:200]}
-使用的工具: {', '.join(tools_used)}
+使用的工具: {', '.join(tools_used)}{code_context}
 
 输出要求:
 - 直接输出完整的 Python 测试文件代码, 用 ```python 包裹

@@ -1,0 +1,29 @@
+description: 编写并验证多个算法示例脚本的工作流，确保运行通过且自测断言成功
+improved_at: ''
+name: algorithm_demo_workflow
+required_tools:
+- code_exec
+- file_read
+- file_write
+steps:
+- description: 读取现有文件或参考代码，了解已有结构及需求背景
+  tool: file_read
+- description: 编写算法demo脚本，包含自测断言或测试用例
+  tool: file_write
+- description: 执行脚本验证运行结果，确保退出码为0且断言通过
+  tool: code_exec
+tags:
+- python
+- algorithms
+- demo
+- testing
+trigger:
+  keywords:
+  - 写demo
+  - 算法示例
+  - 冒泡排序
+  - 拓扑排序
+  - DFS
+  - 示例代码
+  patterns: []
+version: 1
