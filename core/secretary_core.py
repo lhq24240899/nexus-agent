@@ -39,6 +39,7 @@ class SecretaryCore:
         self._compact_lock = threading.Lock()
         self._compact_running = False
         self._last_compact_result: dict | None = None
+        self.last_test_result = None  # 最近一次自动测试结果, 供前端轮询
 
     SYSTEM_PROMPT = """你是 Nexus 双核 Agent 的秘书。
 
@@ -246,6 +247,11 @@ class SecretaryCore:
             "http_request": ["请求", "api", "接口", "curl", "http", "抓取网页"],
             "parallel_execute": ["同时", "并行", "一起", "分别", "多个任务"],
             "use_skill": ["技能", "工作流", "skill"],
+            "code_lint": ["lint", "格式化", "格式", "代码规范", "ruff", "eslint", "检查语法"],
+            "code_find_def": ["函数定义", "类定义", "定义在哪", "find_def"],
+            "code_find_refs": ["引用", "哪里调用", "调用处", "find_refs"],
+            "code_outline": ["大纲", "结构", "文件结构", "outline"],
+            "code_edit_symbol": ["修改函数", "修改类", "替换函数", "edit_symbol"],
         }
 
         selected = set()
@@ -258,7 +264,9 @@ class SecretaryCore:
                           "重构", "功能", "实现", "项目", "文件", "code", "debug"]
         if any(kw in task_lower for kw in coding_keywords):
             selected.update(["file_read", "code_search", "code_edit", "code_exec",
-                           "project_analyze", "file_list", "file_write"])
+                           "project_analyze", "file_list", "file_write",
+                           "code_lint", "code_find_def", "code_find_refs",
+                           "code_outline", "code_edit_symbol"])
 
         # MCP 文件系统工具: 文件相关任务时带上
         if any(kw in task_lower for kw in ["文件", "目录", "项目", "代码", "读取", "修改"]):
@@ -803,7 +811,151 @@ class SecretaryCore:
                        f"经验库 {len(self.libs.experience)} 条达阈值")
             self.compact_experience_async()
         self._sync_to_ima(item, task)
+        # 异步生成单元测试 (不阻塞主流程, 有条件触发)
+        self._maybe_generate_tests(task, tools_used, success, mode)
         return item
+
+    # ========== 测试自动生成 (异步, 有条件触发) ==========
+
+    def _maybe_generate_tests(self, task: str, tools_used: list, success: bool, mode: str = "work"):
+        """判断是否需要生成测试, 需要则异步启动"""
+        if not self._should_generate_tests(tools_used, success, mode):
+            return
+        try:
+            thread = threading.Thread(
+                target=self._generate_tests_async,
+                args=(task, tools_used),
+                daemon=True
+            )
+            thread.start()
+            logger.log("secretary", "测试生成已启动", f"后台异步生成, 不阻塞主流程")
+        except Exception as e:
+            logger.log("secretary", "测试生成启动失败", str(e))
+
+    def _should_generate_tests(self, tools_used: list, success: bool, mode: str = "work") -> bool:
+        """判断是否需要生成测试:
+        - 任务必须成功
+        - 必须改了代码 (file_write 或 code_edit 或 code_edit_symbol)
+        - 只在 work 模式生成
+        """
+        if not success:
+            return False
+        if not tools_used:
+            return False
+        if mode != "work":
+            return False
+        code_tools = {"file_write", "code_edit", "code_edit_symbol"}
+        return any(t in code_tools for t in tools_used)
+
+    def _generate_tests_async(self, task: str, tools_used: list):
+        """后台生成单元测试:
+        1. 从任务描述中提取要测试的函数
+        2. 生成 pytest 测试用例 (最多3个: 正常+边界+异常)
+        3. 写入临时目录并运行
+        4. 结果存入经验库
+        """
+        try:
+            import tempfile
+            import os
+            import subprocess
+            import sys
+
+            # 1. 让秘书模型生成测试代码
+            prompt = f"""为以下任务中改动的函数生成 pytest 单元测试。
+
+任务: {task[:200]}
+使用的工具: {', '.join(tools_used)}
+
+输出要求:
+- 直接输出完整的 Python 测试文件代码, 用 ```python 包裹
+- 最多 3 个测试函数: 正常输入、边界值、异常输入
+- 导入路径根据实际文件路径推断
+- 不要解释, 不要额外文字
+"""
+            resp = self.client.chat.completions.create(
+                model=SECRETARY_CONFIG["model"],
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1500,
+            )
+            raw_content = resp.choices[0].message.content or ""
+            test_code = raw_content.strip()
+            # 提取代码块 (如果有 ```python 包裹)
+            if "```python" in test_code:
+                test_code = test_code.split("```python")[1].split("```")[0].strip()
+            elif "```" in test_code:
+                test_code = test_code.split("```")[1].split("```")[0].strip()
+
+            if not test_code or len(test_code) < 15:
+                logger.log("secretary", "测试生成跳过",
+                           f"代码为空或过短(len={len(test_code)}), 原始前100字: {raw_content[:100]}")
+                self.last_test_result = {
+                    "passed": False, "status": "生成失败",
+                    "task": task[:80], "output": f"测试代码为空(len={len(test_code)})",
+                    "test_count": 0, "timestamp": time.strftime("%H:%M:%S"),
+                }
+                return
+
+            # 2. 写入项目 tests/auto_generated/ 目录, 从项目根目录运行
+            import os as _os
+            project_root = _os.getcwd()
+            test_dir = _os.path.join(project_root, "tests", "auto_generated")
+            _os.makedirs(test_dir, exist_ok=True)
+            test_filename = f"test_auto_{int(time.time())}.py"
+            test_path = _os.path.join(test_dir, test_filename)
+            with open(test_path, "w", encoding="utf-8") as f:
+                f.write(test_code)
+
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pytest", test_path, "-v", "--tb=short"],
+                    capture_output=True, text=True, timeout=20,
+                    cwd=project_root, encoding="utf-8", errors="replace"
+                )
+                output = (result.stdout + result.stderr)[:1000]
+                passed = result.returncode == 0
+
+                # 统计测试用例数
+                import re as _re
+                passed_count = len(_re.findall(r"PASSED", output))
+                failed_count = len(_re.findall(r"FAILED", output))
+                test_count = passed_count + failed_count or 3
+
+                # 3. 结果存入经验库 + 存储供前端轮询
+                status = "通过" if passed else "失败"
+                self.last_test_result = {
+                    "passed": passed,
+                    "status": status,
+                    "task": task[:80],
+                    "output": output[:500],
+                    "test_count": test_count,
+                    "test_file": f"tests/auto_generated/{test_filename}",
+                    "timestamp": time.strftime("%H:%M:%S"),
+                }
+                self.libs.tools.add(
+                    f"[自动测试{status}] 任务: {task[:60]}\n"
+                    f"测试文件: tests/auto_generated/{test_filename}\n"
+                    f"测试结果: {output[:300]}",
+                    meta={"type": "auto_test", "passed": passed}
+                )
+                logger.log("secretary", "自动测试完成",
+                           f"{status}, {passed_count}通过/{failed_count}失败, 文件: {test_filename}")
+            except subprocess.TimeoutExpired:
+                self.last_test_result = {
+                    "passed": False, "status": "超时",
+                    "task": task[:80], "output": "20秒未完成",
+                    "test_count": 0, "timestamp": time.strftime("%H:%M:%S"),
+                }
+                logger.log("secretary", "自动测试超时", "20秒未完成, 跳过")
+            except Exception as e:
+                logger.log("secretary", "自动测试运行失败", str(e))
+                self.last_test_result = {
+                    "passed": False, "status": "运行错误",
+                    "task": task[:80], "output": str(e)[:300],
+                    "test_count": 0, "timestamp": time.strftime("%H:%M:%S"),
+                }
+        except Exception as e:
+            logger.log("secretary", "测试生成异常", str(e))
 
     def seed_demo_data(self) -> dict:
         """预置实用示例数据 (幂等: 四库已有任何内容则跳过, 防止重复灌入)"""

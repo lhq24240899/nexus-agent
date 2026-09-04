@@ -1,0 +1,45 @@
+description: 创建带边界测试的Python函数脚本，写入文件并运行验证
+improved_at: ''
+name: python_function_test_and_verify
+required_tools:
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- code_exec
+- file_write
+- file_read
+- code_exec
+steps:
+- description: 分析需求，确定函数签名及边界测试列表（正数、负数、浮点、零、双负、除零、无限小数等）
+  tool: code_exec
+- description: 设计除零保护逻辑，编写核心函数体
+  tool: code_exec
+- description: 组装包含main()测试入口的完整Python代码
+  tool: code_exec
+- description: 预执行或静态检查代码，确保无语法错误
+  tool: code_exec
+- description: 生成最终代码字符串并处理转义
+  tool: code_exec
+- description: 将完整代码写入目标路径（如D:/nexus_agent/tmp_div.py）
+  tool: file_write
+- description: 读取已写入文件，确认内容与预期一致
+  tool: file_read
+- description: 运行Python文件，检查退出码和输出结果，验证所有边界场景通过
+  tool: code_exec
+tags:
+- Python
+- 脚本生成
+- 函数开发
+- 测试验证
+- 文件操作
+trigger:
+  keywords:
+  - python
+  - 除法
+  - 函数
+  - 边界测试
+  - 文件创建
+  - 运行验证
+  patterns: []
+version: 1

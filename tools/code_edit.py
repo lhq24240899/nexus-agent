@@ -261,9 +261,23 @@ class CodeEditTool(BaseTool):
         if len(diff) > 2000:
             diff_preview += f"\n... (diff 共 {len(diff)} 字符, 已截断)"
 
+        # 编辑后自动 lint (仅代码文件)
+        lint_result = ""
+        if path.suffix.lower() in (".py", ".js", ".jsx", ".ts", ".tsx", ".go"):
+            try:
+                from tools.code_lint import CodeLintTool
+                linter = CodeLintTool()
+                lint_output = linter.execute(str(path), fix=True)
+                has_issue = ("reformatted" in lint_output or "发现问题" in lint_output
+                             or "错误" in lint_output or "failed" in lint_output.lower())
+                if lint_output and has_issue:
+                    lint_result = f"\n\n[自动Lint]\n{lint_output[:500]}"
+            except Exception:
+                pass
+
         return (f"✅ 编辑成功 ({action_desc})\n"
                 f"文件: {path}\n"
                 f"备份: {backup_path.name}\n"
                 f"原大小: {len(original)} 字符 → 新大小: {len(new_content)} 字符\n"
                 f"变更行数: +{new_content.count(chr(10)) - original.count(chr(10))} 行\n"
-                f"\n--- Diff ---\n{diff_preview}")
+                f"\n--- Diff ---\n{diff_preview}{lint_result}")

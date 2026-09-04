@@ -26,6 +26,7 @@ from tools.use_skill import UseSkillTool
 from tools.cleanup import CleanupTempTool
 from tools.code_ast_tools import CodeFindDefTool, CodeFindRefsTool, CodeOutlineTool
 from tools.code_edit_symbol import CodeEditSymbolTool
+from tools.code_lint import CodeLintTool
 
 PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
 
@@ -73,6 +74,7 @@ class ToolManager:
         "code_find_refs": CodeFindRefsTool,
         "code_outline": CodeOutlineTool,
         "code_edit_symbol": CodeEditSymbolTool,
+        "code_lint": CodeLintTool,
     }
 
     def __init__(self, linux_embed=None, code_index=None, profile_manager=None, ast_index=None):

@@ -206,6 +206,15 @@ def create_app() -> Flask:
         return jsonify(result)
 
     # ============ 系统状态 ============
+    @app.route("/api/test_result")
+    def test_result():
+        """返回最近一次自动测试结果, 供前端轮询"""
+        if agent and hasattr(agent, "secretary") and agent.secretary:
+            result = agent.secretary.last_test_result
+            if result:
+                return jsonify(result)
+        return jsonify({"passed": None, "status": "none", "output": ""})
+
     @app.route("/api/stats")
     def stats():
         return jsonify(agent.stats())

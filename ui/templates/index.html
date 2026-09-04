@@ -263,6 +263,24 @@
   .tool-status.success { border-color: #3fb950; background: rgba(63,185,80,0.1); }
   .tool-status.success::before { content: "✓"; color: #3fb950; }
   .tool-status.success .tool-name { color: #3fb950; }
+  .test-result-badge {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 8px 12px; margin: 6px 0 6px 20px; font-size: 12px;
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+  }
+  .test-result-badge.passed { border-color: #3fb950; background: rgba(63,185,80,0.1); }
+  .test-result-badge.passed::before { content: "🧪"; }
+  .test-result-badge.failed { border-color: #f85149; background: rgba(248,81,73,0.1); }
+  .test-result-badge.failed::before { content: "🧪"; }
+  .test-result-badge .test-status { font-weight: bold; }
+  .test-result-badge.passed .test-status { color: #3fb950; }
+  .test-result-badge.failed .test-status { color: #f85149; }
+  .test-result-badge .test-detail {
+    display: none; margin-top: 6px; padding: 6px 8px;
+    background: #0d1117; border-radius: 4px; font-family: monospace;
+    font-size: 11px; white-space: pre-wrap; color: #c9d1d9;
+  }
+  .test-result-badge.expanded .test-detail { display: block; }
   .tool-error-detail {
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     padding: 8px 12px; margin: 4px 0 8px 20px; font-size: 11px;
@@ -1028,6 +1046,46 @@ const MENU_ITEMS_NEXUS = [
 // 语音朗读状态
 let currentSpeech = null;
 
+// 轮询异步测试结果
+function pollTestResult(respDiv) {
+  let attempts = 0;
+  const maxAttempts = 15;
+  const interval = setInterval(async () => {
+    attempts++;
+    try {
+      const resp = await fetch('/api/test_result');
+      const data = await resp.json();
+      if (data.status && data.status !== 'none') {
+        clearInterval(interval);
+        showTestResult(respDiv, data);
+      }
+    } catch (e) {}
+    if (attempts >= maxAttempts) clearInterval(interval);
+  }, 2000);
+}
+
+function showTestResult(respDiv, data) {
+  const cls = data.passed ? 'passed' : 'failed';
+  const countText = data.test_count ? data.test_count + ' cases' : '';
+  const badge = document.createElement('div');
+  badge.className = 'test-result-badge ' + cls;
+  badge.onclick = () => badge.classList.toggle('expanded');
+  badge.innerHTML =
+    '<span class="test-status">Auto Test: ' + escapeHtml(data.status) + '</span>' +
+    '<span style="color:#8b949e">' + countText + '</span>' +
+    '<span style="color:#6e7681;margin-left:auto">' + (data.timestamp || '') + ' click to expand</span>' +
+    '<div class="test-detail">' + escapeHtml(data.output || 'no output') + '</div>';
+  const timeline = respDiv.querySelector('.tool-timeline');
+  const bubble = respDiv.querySelector('.bubble');
+  if (timeline) {
+    timeline.parentNode.insertBefore(badge, timeline.nextSibling);
+  } else if (bubble) {
+    bubble.parentNode.insertBefore(badge, bubble);
+  } else {
+    respDiv.appendChild(badge);
+  }
+}
+
 function buildActions(role, msgDiv) {
   const actions = role === 'nexus' ? NEXUS_ACTIONS : USER_ACTIONS;
   const time = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
@@ -1614,6 +1672,8 @@ async function sendMessage() {
           fastPath = event.record.fast_path;
           timing = event.record.timing;
           tokens = event.record.tokens || {input: 0, output: 0, total: 0};
+          // 异步测试结果轮询 (最多等30秒, 每2秒查一次)
+          pollTestResult(respDiv);
         } else if (event.type === 'error') {
           bubble.textContent = 'Error: ' + event.message;
           bubble.classList.remove('loading');

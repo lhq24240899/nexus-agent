@@ -1,0 +1,35 @@
+description: 根据需求创建包含加法函数的Python脚本并运行验证
+improved_at: ''
+name: create_add_function_script
+required_tools:
+- code_exec
+- file_read
+- code_exec
+- code_exec
+- file_write
+- code_exec
+- code_exec
+- code_exec
+steps:
+- description: 读取目标路径现有内容或确认上下文，避免覆盖或了解已有文件
+  tool: file_read
+- description: 生成或预览Python脚本代码，包含加法函数add(a,b)和测试入口main()
+  tool: code_exec
+- description: 将生成的Python代码写入目标路径文件（如tmp_add.py）
+  tool: file_write
+- description: 运行该Python脚本，验证函数输出与退出码是否符合预期
+  tool: code_exec
+tags:
+- python
+- 脚本创建
+- 函数实现
+- 测试验证
+trigger:
+  keywords:
+  - add
+  - 加法函数
+  - 创建脚本
+  - python脚本
+  - 运行验证
+  patterns: []
+version: 1

@@ -1,0 +1,29 @@
+description: 创建并验证Python乘法函数脚本
+improved_at: ''
+name: python_multiply_script_creation
+required_tools:
+- file_read
+- file_read
+- file_write
+- code_exec
+steps:
+- description: 读取任务需求或目标路径确认创建目标
+  tool: file_read
+- description: 检查目标文件是否已存在，避免覆盖风险
+  tool: file_read
+- description: 写入实现乘法函数multiply及main测试入口的Python文件
+  tool: file_write
+- description: 运行脚本验证各测试用例输出正确且退出码为0
+  tool: code_exec
+tags:
+- python
+- 文件操作
+- 代码验证
+trigger:
+  keywords:
+  - multiply
+  - 乘法
+  - python脚本
+  - 文件创建
+  patterns: []
+version: 1

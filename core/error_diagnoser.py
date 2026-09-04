@@ -39,6 +39,10 @@ class CodeErrorDiagnoser:
         self.last_diagnosis: Optional[dict] = None
         self.max_related_files = 5  # 最多读取多少个关联文件
 
+    def reset(self):
+        """重置诊断状态, 每次新任务开始时调用"""
+        self.last_diagnosis = None
+
     def diagnose(self, tool_output: str, tool_name: str = "", tool_args: dict = None) -> dict:
         """
         分析工具返回的错误输出, 自动读取相关代码。

@@ -92,7 +92,21 @@ class FileWriteTool(BaseTool):
             if self.ast_index:
                 try: self.ast_index.index_file(str(p))
                 except Exception: pass
-            return f"已写入 {len(content)} 字符到 {path}"
+            # 写入后自动 lint (仅代码文件)
+            lint_result = ""
+            if p.suffix.lower() in (".py", ".js", ".jsx", ".ts", ".tsx", ".go"):
+                try:
+                    from tools.code_lint import CodeLintTool
+                    linter = CodeLintTool()
+                    lint_output = linter.execute(str(p), fix=True)
+                    # 只有完全没问题(check无问题 + format已是最佳)才过滤
+                    has_issue = ("reformatted" in lint_output or "发现问题" in lint_output
+                                 or "错误" in lint_output or "failed" in lint_output.lower())
+                    if lint_output and has_issue:
+                        lint_result = "\n\n[自动Lint]\n" + lint_output[:500]
+                except Exception:
+                    pass
+            return f"已写入 {len(content)} 字符到 {path}{lint_result}"
         except Exception as e:
             return f"写入失败: {e}"
 

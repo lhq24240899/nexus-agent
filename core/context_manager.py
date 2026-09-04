@@ -46,16 +46,27 @@ except ImportError:
         return int(cn * 1.5 + en * 0.3)
 
 
-def count_messages_tokens(messages: list[dict]) -> int:
-    """估算 messages 数组的总 token 数"""
+def count_messages_tokens(messages: list) -> int:
+    """估算 messages 数组的总 token数 (兼容 dict 和 pydantic ChatCompletionMessage)"""
     total = 0
     for msg in messages:
-        total += count_tokens(msg.get("content", "") or "")
+        # 兼容 dict 和 pydantic 对象
+        if isinstance(msg, dict):
+            content = msg.get("content", "") or ""
+            tool_calls = msg.get("tool_calls") or []
+        else:
+            content = getattr(msg, "content", "") or ""
+            tool_calls = getattr(msg, "tool_calls", None) or []
+        total += count_tokens(content)
         # 工具调用也占 token
-        if "tool_calls" in msg:
-            for tc in msg["tool_calls"]:
-                total += count_tokens(tc.get("function", {}).get("arguments", ""))
-                total += 10  # 工具名和结构开销
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                args = tc.get("function", {}).get("arguments", "")
+            else:
+                func = getattr(tc, "function", None)
+                args = getattr(func, "arguments", "") if func else ""
+            total += count_tokens(args)
+            total += 10  # 工具名和结构开销
         total += 4  # 每条消息的角色标签开销
     return total
 

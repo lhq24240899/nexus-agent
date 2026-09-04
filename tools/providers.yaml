@@ -82,3 +82,8 @@
   category: file
 
 - name: code_edit_symbol
+
+- name: code_lint
+  description: 代码lint检查和自动格式化(Python ruff/JS prettier/Go gofmt)
+  category: code
+  enabled: true
