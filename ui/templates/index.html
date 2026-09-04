@@ -255,12 +255,15 @@
   .tool-status.done .spinner { display: none; }
   .tool-status.done::before { content: "✓"; color: #3fb950; }
   .tool-status.error { border-color: #f85149; background: rgba(248,81,73,0.1); }
+  .tool-status.error .spinner { display: none; }
   .tool-status.error::before { content: "✗"; color: #f85149; }
   .tool-status.error .tool-name { color: #f85149; }
   .tool-status.fix { border-color: #d29922; background: rgba(210,153,34,0.1); }
+  .tool-status.fix .spinner { display: none; }
   .tool-status.fix::before { content: "🔧"; color: #d29922; }
   .tool-status.fix .tool-name { color: #d29922; }
   .tool-status.success { border-color: #3fb950; background: rgba(63,185,80,0.1); }
+  .tool-status.success .spinner { display: none; }
   .tool-status.success::before { content: "✓"; color: #3fb950; }
   .tool-status.success .tool-name { color: #3fb950; }
   .test-result-badge {
