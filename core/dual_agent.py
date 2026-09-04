@@ -120,6 +120,7 @@ class DualCoreAgent:
                    + ", ".join(t["name"] for t in self.tool_manager.list_tools()))
         self.task_history: list[dict] = []
         self._index_building = False  # 代码索引是否正在后台构建
+        self._stop_event = None  # 当前任务的停止事件
         # 会话级模式 (必须在 _load_conversation 之前初始化)
         self.current_mode = "work"
         # 按模式分开存储对话历史: work(编码) / chat(聊天) / brainstorm(头脑风暴)
@@ -168,6 +169,15 @@ class DualCoreAgent:
         t = threading.Thread(target=_lifecycle_loop, daemon=True)
         t.start()
         logger.log("system", "技能生命周期管理", "已启动, 每24小时自动清理低质量技能")
+
+    def stop(self) -> dict:
+        """停止当前正在执行的任务. 设置 stop_event, decision 会在下一轮循环检查并中断.
+        被停止的任务不触发沉淀(经验库/记忆库/技能生成)."""
+        if self._stop_event:
+            self._stop_event.set()
+            logger.log("system", "任务停止", "用户主动停止当前任务")
+            return {"ok": True, "message": "已发送停止信号, 任务将在下一轮工具调用前中断"}
+        return {"ok": False, "message": "当前没有正在执行的任务"}
 
     def switch_workspace(self, name: str, save_current: bool = True) -> dict:
         """切换工作空间: 切换数据库 → 重建索引 → 加载新对话"""
@@ -705,21 +715,35 @@ class DualCoreAgent:
         t2 = time.time()
         input_tokens = 0
         output_tokens = 0
-        for event in self.decision.decide_stream(task, context, history_text,
-                                                  allowed_tools=allowed_tools):
-            if event["type"] == "token":
-                result += event["content"]
-            elif event["type"] == "done":
-                result = event["result"]
-                tool_calls = event["tool_calls"]
-                input_tokens = event.get("input_tokens", 0)
-                output_tokens = event.get("output_tokens", 0)
-            yield event
+        was_stopped = False
+        # 创建新的 stop_event 并传给 decision
+        self._stop_event = threading.Event()
+        self.decision.stop_event = self._stop_event
+        try:
+            for event in self.decision.decide_stream(task, context, history_text,
+                                                      allowed_tools=allowed_tools):
+                if event["type"] == "token":
+                    result += event["content"]
+                elif event["type"] == "done":
+                    result = event["result"]
+                    tool_calls = event["tool_calls"]
+                    input_tokens = event.get("input_tokens", 0)
+                    output_tokens = event.get("output_tokens", 0)
+                elif event["type"] == "stopped":
+                    was_stopped = True
+                    result = event.get("result", "任务已被用户停止")
+                yield event
+        finally:
+            self._stop_event = None
+            self.decision.stop_event = None
         decision_time = round(time.time() - t2, 2)
 
-        # 反思 (异步后台执行, 不阻塞流式返回; 快速通道/聊天模式跳过)
+        # 反思 (异步后台执行, 不阻塞流式返回; 快速通道/聊天模式/被stop的任务跳过)
         reflection = "(轻量模式: 未启用反思与沉淀)" if is_light else "(快速通道: 未启用反思)"
-        if not fast_path:
+        if was_stopped:
+            reflection = "(任务已停止: 不触发沉淀)"
+            logger.log("system", "任务已停止", "不触发经验沉淀和技能生成")
+        if not fast_path and not was_stopped:
             tools_used = self.decision.last_tools_used
             reflection = "(秘书后台复盘中)"
             def _background_learning():

@@ -1,0 +1,34 @@
+description: 在无法持久写入文件的环境中，使用code_exec编写、验证并交付Python演示脚本。
+improved_at: ''
+name: python_demo_script_sandbox_delivery
+required_tools:
+- code_exec
+steps:
+- description: 使用最简单的代码实现用户需求（如打印1-10列表），并执行验证核心输出
+  tool: code_exec
+- description: 参考项目中的*_demo.py命名和风格，编写带函数封装、main()与assert自测的完整脚本
+  tool: code_exec
+- description: 执行完整脚本，检查断言与输出是否符合预期，并记录运行证据
+  tool: code_exec
+- description: 尝试用code_exec将脚本写入目标文件路径；若因环境限制或校验拦截失败，则准备改为输出代码
+  tool: code_exec
+- description: 在临时环境中再次验证脚本无问题后，通过stdout输出完整代码和运行结果，提示用户手动保存到目标文件
+  tool: code_exec
+tags:
+- python
+- code_exec
+- 脚本生成
+- 沙箱环境
+- 验证
+trigger:
+  keywords:
+  - 写一个
+  - 列表
+  - print
+  - 打印
+  - demo
+  - 脚本
+  - code_exec
+  - 无法写文件
+  patterns: []
+version: 1

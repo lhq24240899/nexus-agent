@@ -151,6 +151,12 @@ def create_app() -> Flask:
         resp.headers["X-Accel-Buffering"] = "no"  # 禁用Nginx缓冲
         return resp
 
+    @app.route("/api/stop", methods=["POST"])
+    def stop_task():
+        """停止当前正在执行的任务"""
+        result = agent.stop()
+        return jsonify(result)
+
     @app.route("/api/history/clear", methods=["POST"])
     def clear_history():
         agent.clear_history()

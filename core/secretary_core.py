@@ -449,8 +449,41 @@ class SecretaryCore:
                 self._learn_brainstorm(task, result)
             elif mode == "chat":
                 self._learn_chat(task, result)
+            # 沉淀后自动检查是否需要清理
+            self._auto_cleanup_libraries()
         except Exception as e:
             logger.log("secretary", "沉淀失败", str(e))
+
+    # 四库自动清理阈值
+    MAX_KNOWLEDGE = 100  # 知识库超过100条自动清理
+    MAX_TOOLS = 50       # 工具库超过50条自动清理
+    MAX_MEMORY = 80      # 记忆库超过80条自动清理流水账
+
+    def _auto_cleanup_libraries(self):
+        """四库自动清理: 超过阈值时删除低价值/旧条目, 防止无限增长"""
+        try:
+            # 知识库: 超过阈值删除最旧的低价值条目
+            if len(self.libs.knowledge) > self.MAX_KNOWLEDGE:
+                all_items = self.libs.knowledge.all()
+                low_value = [it for it in all_items
+                             if (it.get("meta", {}) or {}).get("importance", 1) <= 2]
+                if low_value:
+                    for it in sorted(low_value, key=lambda x: x.get("timestamp", ""))[:20]:
+                        self.libs.knowledge.delete(it["id"])
+                    logger.log("secretary", "知识库自动清理",
+                               f"删除{min(20, len(low_value))}条低价值条目, 剩余{len(self.libs.knowledge)}条")
+            # 工具库: 超过阈值删除最旧的
+            if len(self.libs.tools) > self.MAX_TOOLS:
+                all_items = self.libs.tools.all()
+                for it in sorted(all_items, key=lambda x: x.get("timestamp", ""))[:20]:
+                    self.libs.tools.delete(it["id"])
+                logger.log("secretary", "工具库自动清理",
+                           f"删除20条旧条目, 剩余{len(self.libs.tools)}条")
+            # 记忆库: 超过阈值清理任务流水账
+            if len(self.libs.memory) > self.MAX_MEMORY:
+                self.clean_memory()
+        except Exception as e:
+            logger.log("secretary", "四库自动清理失败", str(e))
 
     def _learn_work(self, task, result, context, tools_used, success=True):
         """Work模式: 经验+工具技巧+任务记录+用户偏好. 失败任务强制复盘失败原因"""
@@ -895,13 +928,39 @@ class SecretaryCore:
     # ========== 测试自动生成 (异步, 有条件触发) ==========
 
     def _maybe_generate_tests(self, task: str, tools_used: list, success: bool, mode: str = "work"):
-        """判断是否需要生成测试, 需要则异步启动"""
+        """判断是否需要生成测试, 需要则异步启动. 同步获取git diff避免线程启动时已提交"""
         if not self._should_generate_tests(tools_used, success, mode):
             return
+        # 同步获取 git diff (此时代码还在工作区, 未被提交)
+        changed_code = ""
+        try:
+            import subprocess as _sp, os as _os
+            diff_result = _sp.run(
+                ["git", "diff", "HEAD", "--unified=3"],
+                capture_output=True, text=True, timeout=10,
+                cwd=_os.getcwd(), encoding="utf-8", errors="replace"
+            )
+            if diff_result.returncode == 0 and diff_result.stdout:
+                changed_code = diff_result.stdout[:3000]
+        except Exception:
+            pass
+        if not changed_code:
+            try:
+                import subprocess as _sp, os as _os
+                status_result = _sp.run(
+                    ["git", "status", "--short"],
+                    capture_output=True, text=True, timeout=10,
+                    cwd=_os.getcwd(), encoding="utf-8", errors="replace"
+                )
+                if status_result.returncode == 0 and status_result.stdout:
+                    changed_code = f"变更文件:\n{status_result.stdout[:500]}"
+            except Exception:
+                pass
+        logger.log("secretary", "测试生成代码上下文", f"git diff长度: {len(changed_code)}")
         try:
             thread = threading.Thread(
                 target=self._generate_tests_async,
-                args=(task, tools_used),
+                args=(task, tools_used, changed_code),
                 daemon=True
             )
             thread.start()
@@ -924,9 +983,9 @@ class SecretaryCore:
         code_tools = {"file_write", "code_edit", "code_edit_symbol"}
         return any(t in code_tools for t in tools_used)
 
-    def _generate_tests_async(self, task: str, tools_used: list):
+    def _generate_tests_async(self, task: str, tools_used: list, changed_code: str = ""):
         """后台生成单元测试:
-        1. 用 git diff 获取实际改动的代码
+        1. 用传入的 changed_code (同步获取的git diff) 作为代码上下文
         2. 让秘书模型基于实际代码生成 pytest 测试用例
         3. 写入临时目录并运行
         4. 结果存入经验库
@@ -937,33 +996,7 @@ class SecretaryCore:
             import subprocess
             import sys
 
-            # 1. 用 git diff 获取实际改动的代码 (最近一次提交后的改动)
-            changed_code = ""
-            try:
-                diff_result = subprocess.run(
-                    ["git", "diff", "HEAD", "--unified=3"],
-                    capture_output=True, text=True, timeout=10,
-                    cwd=os.getcwd(), encoding="utf-8", errors="replace"
-                )
-                if diff_result.returncode == 0 and diff_result.stdout:
-                    changed_code = diff_result.stdout[:3000]  # 限制长度避免超token
-            except Exception:
-                pass
-
-            # 如果没有 git diff (可能是新文件未跟踪), 尝试 git status
-            if not changed_code:
-                try:
-                    status_result = subprocess.run(
-                        ["git", "status", "--short"],
-                        capture_output=True, text=True, timeout=10,
-                        cwd=os.getcwd(), encoding="utf-8", errors="replace"
-                    )
-                    if status_result.returncode == 0:
-                        changed_code = f"变更文件:\n{status_result.stdout[:500]}"
-                except Exception:
-                    pass
-
-            # 2. 让秘书模型基于实际代码生成测试
+            # 1. 用传入的 git diff 作为代码上下文 (已在 _maybe_generate_tests 中同步获取)
             code_context = f"\n\n实际改动代码(git diff):\n```\n{changed_code}\n```" if changed_code else ""
             prompt = f"""为以下任务中改动的函数生成 pytest 单元测试。
 

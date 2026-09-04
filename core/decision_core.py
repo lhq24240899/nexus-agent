@@ -38,6 +38,7 @@ class DecisionCore:
         self.consecutive_code_failures = 0
         # 本次任务是否已用 code_find_def 定位 (改代码前必须先定位)
         self._used_ast_locate = False
+        self.stop_event = None  # 外部传入的停止事件 (DualCoreAgent 设置)
         # 模式: work=完整编码助手, chat=轻量聊天 (影响系统提示词/工具/模型)
         self.mode = "work"
         # 模型覆盖: None 用默认决策模型, 非 None 时临时切换 (聊天模式用 flash)
@@ -661,6 +662,11 @@ class DecisionCore:
         total_output = 0
 
         while True:
+            # stop 检查: 用户点了停止就中断, 不继续执行
+            if self.stop_event and self.stop_event.is_set():
+                logger.log("nexus", "任务已停止", "用户主动中断, 终止决策循环")
+                yield {"type": "stopped", "result": "任务已被用户停止", "tool_calls": tool_call_count}
+                return
             # 上下文压缩检查: 超过阈值自动压缩
             if self.ctx_manager.should_compress(messages):
                 old_tokens = count_messages_tokens(messages)
