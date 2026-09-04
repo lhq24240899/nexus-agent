@@ -1,15 +1,13 @@
 
 
----
-
-##功能说明
+## 一、功能说明
 
 
 - 双核架构（决策核心 + 秘书核心）
 - 四库管理 + 向量检索 + 差异化权重
 - 嵌入 Linux（Docker/WSL2/Mock）
 - Web 控制台（对话/日志/终端/四库/成本/Stats）
-- 工具系统（35 工具 + MCP + 插件）
+- 工具系统（36 工具 + MCP + 插件）
 - 技能系统（自我改进 + 置信度 + 版本回滚）
 - 上下文压缩（60% 阈值 + 工具结果截断 + LLM 摘要）
 - 失败拦截（检测到工具失败强制修复，禁止虚假成功）
@@ -22,7 +20,13 @@
 - 经验→技能自动转化
 - IMA 腾讯笔记云端备份（追加模式滚动笔记）
 - 多工作空间隔离（每个项目独立对话/四库/代码索引/MCP）
-- 代码符号索引（tree-sitter + AST，定义跳转/引用追踪/项目大纲）
+- 代码符号索引（tree-sitter + AST，定义跳转/引用追踪/项目大纲，增量更新）
+- 精确代码编辑（code_edit_symbol 按函数/类名替换，AST 定位 + 引用影响分析）
+- 编码闭环（跑→错→修→再跑，结构化错误解析 + 自动定位 + 前端可视化）
+- code_exec 写文件强制拦截（引导用 file_write，防止反复试写）
+- code_search 优先走 AST 索引（区分定义和引用，比 grep 精确）
+- 前端工具调用可视化（运行中/成功/失败/修复状态 + 错误卡片）
+- 27 个单元测试（编码闭环 + AST 索引 + 工具管理 + MCP）
 - MCP 超时保护 + 健康检查 + 自动重连
 - 任务成功率基于最终结果判定（中间工具失败不影响）
 - 自定义弹窗（删除确认/文件夹目录树浏览）
@@ -30,7 +34,7 @@
 
 ---
 
-## 一、项目概述
+## 二、项目概述
 
 
 - **决策核心**：只做推理决策，不查资料、不调工具，保持"决策纯度"
@@ -41,7 +45,7 @@
 
 ---
 
-## 二、架构总览
+## 三、架构总览
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -64,7 +68,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │                 决策核心 Nexus (独立 API)                  │
 │              只看任务 + 上下文 → 输出决策                   │
-│         (Function Calling → 35工具 + MCP + 插件)           │
+│         (Function Calling → 36工具 + MCP + 插件)           │
 └──────────────────────────┬──────────────────────────────┘
                            ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -77,29 +81,7 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
----
 
-## 三、与视频的技术对应
-
-| 视频中的概念 | 本项目实现 | 文件位置 |
-|---|---|---|
-| 双核（Nixxes + 秘书） | `DecisionCore` + `SecretaryCore`，两个独立 OpenAI 客户端 | `core/` |
-| 各自一条 API | `.env` 中 `DECISION_*` / `SECRETARY_*` 分开配置 | `.env` |
-| 四库（工具/知识/经验/记忆） | `FourLibraries`，SQLite 持久化 + 向量索引 + 差异化权重 | `libraries/four_libraries.py` |
-| 秘书预判、递达上下文 | `SecretaryCore.anticipate()`：检索 → LLM 筛选 → 递达 | `core/secretary_core.py` |
-| 决策纯度高、不模糊 | 决策核心 system prompt 限定只做决策，上下文由秘书提供 | `core/decision_core.py` |
-| 高维向量搜索 | `VectorStore`，支持 embedding API + TF-IDF 回退 | `libraries/vector_store.py` |
-| 标点定位（非逐页翻） | 向量余弦相似度直接命中，不遍历 | `libraries/vector_store.py` |
-| 嵌入 Linux 系统 | `LinuxEmbed`，WSL2 Ubuntu（D盘），真实命令执行 | `system/linux_embed.py` |
-| 日志可视化 | `AgentLogger` + Web UI 日志面板 | `utils/logger.py` |
-| 成本监控 | `CostTracker`，真实 token + 账单校准 | `utils/cost_tracker.py` |
-| UI 界面 | Flask Web 控制台 + pywebview 桌面端 | `ui/`、`desktop.py` |
-| 工具调用 | Function Calling，35 工具 + MCP + 插件系统 | `tools/`、`mcp/`、`plugins/` |
-| 学习记忆升级 | 四库自动沉淀 + 经验反思 + 压缩合并 | `core/secretary_core.py` |
-| 多工作空间隔离 | 每个项目独立对话历史/四库/代码索引/MCP配置 | `core/workspace.py` |
-| 代码符号索引 | tree-sitter + AST，定义跳转/引用追踪/项目大纲 | `tools/code_ast_tools.py` |
-| MCP 稳定性 | 10秒超时 + 健康检查 + 切换工作空间自动重连 | `mcp/mcp_client.py` |
-| 二进制层重构 | **未实现**，视频作者也尚未实现（见第九节） | — |
 
 ---
 
@@ -306,7 +288,56 @@ python run.py --cli
 **经验库压缩：**
 - 超过 30 条时自动 LLM 提炼合并，保留 10 条精华
 
-### 6.7 IMA 云端备份（追加模式）
+### 6.7 编码闭环（跑→错→修→再跑）
+
+**工作流：**
+```
+file_write 写代码 → code_exec 运行 → 结构化错误解析 → code_edit 精准修复 → code_exec 再跑验证 → 循环直到通过
+```
+
+**结构化错误解析：**
+- `parse_python_error()` 解析 traceback，提取错误类型/文件/行号/函数
+- `format_error_structured()` 格式化输出，含报错行前后 3 行上下文（`>>>` 标记报错行）
+- Agent 直接根据文件:行号定位，不需要瞎猜
+
+**强制约束：**
+- 修复后必须再跑一次验证，不能改完就说"应该好了"
+- 同一错误连续 2 次修不好，强制 file_read 读报错行前后 20 行分析
+- 最多重试 5 次，仍失败如实告知用户
+- code_exec 检测到写文件操作直接拦截，引导用 file_write（防止 8 次 code_exec 反复试写）
+
+**前端可视化：**
+- 工具调用状态实时显示：运行中（spinner）/ 成功（绿色✓）/ 失败（红色✗）/ 修复中（🔧）
+- code_exec 报错时显示红色错误卡片（错误类型+位置+代码上下文）
+- 最终回答保留完整工具调用时间线
+
+### 6.8 AST 代码索引（深度集成）
+
+**索引能力：**
+- Python 用内置 `ast` 模块，JS/TS/Go/Java/Rust 用 tree-sitter
+- 并发构建（ThreadPoolExecutor，4 worker），按项目路径分库（MD5 hash）
+- 存储：符号定义表（name/type/file/line/end_line/signature/docstring）+ 引用表（symbol_name/file/line/context）
+
+**增量更新：**
+- `file_write` / `code_edit` 修改文件后自动调用 `index_file()` 增量更新
+- 删除该文件旧符号+引用，重新解析插入，索引实时准确
+- 不需要手动重建整个项目索引
+
+**工具链：**
+| 工具 | 作用 |
+|---|---|
+| `code_find_def` | 按函数/类名精确定义位置（文件+行号+签名+docstring） |
+| `code_find_refs` | 查找所有调用处（评估改动影响范围） |
+| `code_outline` | 文件结构大纲（快速了解陌生文件） |
+| `code_edit_symbol` | 按符号名直接替换实现（内部 AST 定位，比 search_replace 可靠） |
+| `code_search` | 符号查询优先走 AST 索引，返回 [AST 定义] 和 [AST 引用] 两类结果 |
+
+**提示词强制：**
+- 改任何函数/类前必须先 `code_find_def` + `code_find_refs`，禁止关键词瞎搜
+- 陌生文件必须先 `code_outline` 看大纲
+- 整个函数/类修改必须用 `code_edit_symbol`
+
+### 6.9 IMA 云端备份（追加模式）
 
 - 经验库新增条目后，异步同步到 IMA 腾讯笔记
 - **追加模式**：所有经验追加到同一个滚动笔记「Nexus经验日志」，不再每次创建新笔记
@@ -339,11 +370,16 @@ D:\nexus_agent\
 │   └── linux_embed.py      # 嵌入 Linux (WSL2/Docker/Mock)
 ├── tools/                  # 工具系统
 │   ├── base_tool.py        # BaseTool 基类
-│   ├── code_exec.py        # Python代码执行 (超时杀进程树)
-│   ├── code_edit.py        # 精确代码编辑
-│   ├── file_ops.py         # 文件读写
+│   ├── code_exec.py        # Python代码执行 (超时杀进程树+写文件拦截)
+│   ├── code_edit.py        # 精确代码编辑 (search_replace+diff+备份回滚)
+│   ├── code_edit_symbol.py # 按符号名编辑 (AST定位+引用影响分析)
+│   ├── code_ast_tools.py   # AST工具 (定义跳转/引用追踪/文件大纲)
+│   ├── code_index.py       # 代码符号索引 (tree-sitter+AST+增量更新)
+│   ├── code_search.py      # 代码搜索 (AST索引优先+grep回退)
+│   ├── file_ops.py         # 文件读写 (写入后自动更新索引)
 │   ├── linux_terminal.py   # Linux命令执行 (黑名单+ulimit+timeout)
 │   ├── cleanup.py          # 临时文件清理
+│   ├── project_analyze.py  # 项目结构分析
 │   └── providers.yaml      # 工具注册配置
 ├── mcp/                    # MCP 协议接入
 ├── plugins/                # 插件系统
@@ -358,10 +394,15 @@ D:\nexus_agent\
 │   ├── logger.py           # 结构化日志
 │   ├── cost_tracker.py     # 成本监控 + 账单校准
 │   └── temp_workspace.py   # 临时工作目录管理
+├── tests/                  # 单元测试 (27个)
+│   ├── test_code_edit_loop.py   # 编码闭环+精确编辑 (17个)
+│   ├── test_ast_index.py        # AST索引+增量更新 (10个)
+│   ├── test_tool_manager.py     # 工具管理
+│   ├── test_mcp_client.py       # MCP客户端
+│   └── test_task_stats.py       # 任务统计
 ├── data/                   # 运行时数据 (自动生成)
 │   ├── nexus.db            # SQLite 四库数据库
 │   └── conversation_history.json  # 对话历史 (按模式分)
-└── test_streaming_fix.py   # 回归测试
 ```
 
 ---
@@ -391,11 +432,6 @@ D:\nexus_agent\
 
 ## 九、关于"二进制层重构"
 
-视频中提到的终极目标——**用二进制代码在 Linux 底层重构 Nexus**——本项目**未实现**，原因：
-
-1. 视频作者本人也说"还没做，不确定能不能成功"
-2. 涉及内核模块开发、系统调用劫持、二进制插桩等底层技术
-3. 可行性存疑：Linux 内核不适合跑 LLM 推理（算力/内存限制），更可能用 eBPF 做系统调用级监控
 
 可能的探索路径：
 - **eBPF**：内核中挂载钩子，监控/拦截系统调用
@@ -405,35 +441,19 @@ D:\nexus_agent\
 
 ---
 
-## 十、与视频原版的差距
-
-| 功能 | 视频原版 | 本项目 |
-|---|---|---|
-| 双核 Agent | ✅ | ✅ |
-| 四库管理 | ✅ | ✅（SQLite + 差异化权重） |
-| 向量检索 | ✅ | ✅ |
-| 独立 API | ✅ | ✅ |
-| 嵌入 Linux | ✅ 桌面级（浏览器/文件管理器 GUI） | ⚠️ 命令行级（WSL2） |
-| UI 界面 | ✅ Aily Blockly | ✅ Flask + pywebview |
-| 远程嵌入 | ✅ | ✅（iframe + API） |
-| 工具调用 | ✅ | ✅（35 工具 + MCP + Function Calling） |
-| 学习记忆升级 | ✅ | ✅（四库自动沉淀 + 反思 + 压缩） |
-| 三模式 | — | ✅（Work/Chat/Brainstorm） |
-| 云端备份 | — | ✅（IMA 腾讯笔记） |
-| 二进制层重构 | 🔄 规划中 | ❌ 未实现 |
-
----
 
 ## 十一、扩展方向
 
-1. **精确代码编辑**：当前 code_exec 偏脚本执行，需增强文件级精确编辑
-2. **代码符号索引**：建立项目代码的 AST 索引，提升编码助手能力
+1. ~~**精确代码编辑**~~ ✅ 已实现（code_edit_symbol 按符号名替换 + AST 定位 + diff 预览）
+2. ~~**代码符号索引**~~ ✅ 已实现（tree-sitter + AST，增量更新，定义/引用/大纲）
 3. ~~**并行工具调用**~~ ✅ 已实现（ThreadPoolExecutor + 依赖检查 + 结果按序组装）
 4. ~~**经验→能力转化**~~ ✅ 已实现（复杂任务后自动创建技能 YAML）
+5. **编码闭环深化**：当前已实现跑→错→修→再跑，后续加测试自动生成 + lint 集成
+6. **沙箱隔离**：当前 code_exec 在 Windows 子进程，后续换 Docker/WSL2 容器隔离
 5. **MCP 生态扩展**：接入更多 MCP 服务器（文件系统、数据库、浏览器）
 6. **本地模型**：Ollama 跑本地模型，完全离线零费用
 7. **安装包分发**：PyInstaller 打包，一键安装
-8. **桌面级 Linux GUI**：当前为命令行级 WSL2，视频原版为浏览器/文件管理器 GUI
+8. **桌面级 Linux GUI**：当前为命令行级 WSL2，原版为浏览器/文件管理器 GUI
 
 ---
 
