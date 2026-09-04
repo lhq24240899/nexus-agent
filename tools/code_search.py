@@ -78,8 +78,9 @@ class CodeSearchTool(BaseTool):
         "required": ["pattern"],
     }
 
-    def __init__(self, code_index=None):
+    def __init__(self, code_index=None, ast_index=None):
         self.code_index = code_index
+        self.ast_index = ast_index
 
     def execute(self, pattern: str = "", path: str = ".",
                 file_type: str = "", max_results: int = 30,
@@ -93,13 +94,29 @@ class CodeSearchTool(BaseTool):
         if not root.exists():
             return f"错误: 目录不存在: {path}"
 
-        # 快速路径: 符号名查询走索引
-        if self.code_index and _is_symbol_query(pattern) and not use_regex:
-            idx_results = self.code_index.search(pattern, project_path=str(root), limit=max_results)
-            if idx_results:
-                lines = [f"[索引] {r['file']}:{r['line']} ({r['type']}) {r['name']}"
-                         for r in idx_results]
-                return f"符号索引找到 {len(idx_results)} 个定义:\n{'-' * 50}\n" + "\n".join(lines)
+        # 快速路径: 符号名查询优先走 AST 索引 (区分定义和引用)
+        if _is_symbol_query(pattern) and not use_regex:
+            if self.ast_index:
+                defs = self.ast_index.find_definition(pattern)
+                refs = self.ast_index.find_references(pattern)
+                if defs or refs:
+                    lines = []
+                    if defs:
+                        lines.append(f"[AST 定义] {len(defs)} 处:")
+                        for d in defs[:10]:
+                            lines.append(f"  {d['file']}:{d['line']}-{d['end_line']} ({d['type']}) {d.get('signature','')}")
+                    if refs:
+                        lines.append(f"[AST 引用] {len(refs)} 处:")
+                        for r in refs[:20]:
+                            lines.append(f"  {r['file']}:{r['line']}  {r.get('context','')[:80]}")
+                    return "\n".join(lines)
+            # 回退: 旧正则索引
+            if self.code_index:
+                idx_results = self.code_index.search(pattern, project_path=str(root), limit=max_results)
+                if idx_results:
+                    lines = [f"[索引] {r['file']}:{r['line']} ({r['type']}) {r['name']}"
+                             for r in idx_results]
+                    return f"符号索引找到 {len(idx_results)} 个定义:\n{'-' * 50}\n" + "\n".join(lines)
 
         # 慢速路径: grep
         try:

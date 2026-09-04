@@ -494,6 +494,45 @@ class MultiLangCodeIndex:
             for r in rows
         ]
 
+    def index_file(self, file_path):
+        """单文件增量索引: 删除该文件旧符号/引用 → 重新解析插入
+        file_write/code_edit 后调用, 保持索引实时准确。
+        非支持语言或文件不存在直接返回跳过。
+        """
+        import os as _os
+        abs_path = _os.path.abspath(file_path)
+        fpath = _Path(abs_path)
+        if not fpath.is_file():
+            return {"file": abs_path, "symbols": 0, "refs": 0, "skipped": "not_found"}
+        ext = fpath.suffix.lower()
+        if ext not in LANG_MAP:
+            return {"file": abs_path, "symbols": 0, "refs": 0, "skipped": "unsupported_lang"}
+        # 计算相对路径 (和 build() 中一致)
+        try:
+            rel = str(fpath.relative_to(self.root))
+        except ValueError:
+            rel = abs_path  # 不在项目根目录下, 用绝对路径
+        # 解析
+        try:
+            syms, refs = self._parse_file(fpath)
+        except Exception as e:
+            return {"file": abs_path, "symbols": 0, "refs": 0, "error": str(e)}
+        # 删除旧数据 + 插入新数据
+        conn = _sqlite3.connect(self.db_path)
+        conn.execute("DELETE FROM symbols WHERE file_path = ?", (rel,))
+        conn.execute("DELETE FROM refs WHERE file_path = ?", (rel,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO symbols VALUES (NULL,?,?,?,?,?,?,?,?)",
+            syms
+        )
+        conn.executemany(
+            "INSERT INTO refs VALUES (NULL,?,?,?,?)",
+            refs
+        )
+        conn.commit()
+        conn.close()
+        return {"file": abs_path, "symbols": len(syms), "refs": len(refs)}
+
     def stats(self):
         conn = _sqlite3.connect(self.db_path)
         s = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]

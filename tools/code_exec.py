@@ -114,6 +114,16 @@ class CodeExecTool(BaseTool):
         if m:
             return f"错误: 代码包含危险操作被拦截 (匹配: {m.group(0)[:50]})"
 
+        # 1.5 写文件检测: 引导用 file_write, 不要在 code_exec 里反复试写
+        write_op = _detect_file_write(code)
+        if write_op:
+            return (
+                f"拦截: 检测到写文件操作 ({write_op})。\n"
+                f"code_exec 是临时环境(执行后文件会被删除), 不适合写持久文件。\n"
+                f"请用 file_write 工具一次写完文件, 再用 code_exec 运行验证。\n"
+                f"正确流程: file_write(写代码) -> code_exec(运行验证) = 2次调用, 不要用 code_exec 反复试写。"
+            )
+
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".py", delete=False, encoding="utf-8"
@@ -189,3 +199,22 @@ class CodeExecTool(BaseTool):
                 proc.kill()
             except Exception:
                 pass
+
+
+# ===== 写文件检测 =====
+def _detect_file_write(code: str) -> str:
+    """检测代码中是否包含写持久文件的操作, 返回匹配的操作描述, 无则返回空字符串"""
+    import re as _re
+    # open 写模式: open("path", "w"/"a"/"w+"/"a+"/"wb"/"ab")
+    if _re.search(r'open\s*\(\s*[^,]+,\s*[\'"][wa][ab+]*[\'"]', code):
+        return "open() 写模式"
+    # Path.write_text / write_bytes
+    if _re.search(r'\.write_text\s*\(|\.write_bytes\s*\(', code):
+        return "Path.write_text/write_bytes"
+    # shutil 写操作
+    if _re.search(r'shutil\.(copy|move|copyfile|copytree)\s*\(', code):
+        return "shutil.copy/move"
+    # os 写操作
+    if _re.search(r'os\.(rename|replace|makedirs|mkdir)\s*\(', code):
+        return "os.rename/mkdir"
+    return ""

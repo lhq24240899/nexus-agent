@@ -343,10 +343,12 @@ class DecisionCore:
 - 【创建新文件不需要先读】用户要求创建新文件时, 直接 file_write, 不需要先 file_read 确认不存在
 
 【编码工作流 —— 跑→错→修→再跑 闭环, 必须遵守】
-1. 理解(精确): project_analyze 看项目结构 → code_find_def 精确定位函数/类定义 → code_find_refs 看所有调用方(评估改动影响) → code_outline 看文件结构 → file_read 读具体内容
-   - 改函数/类前必须先 code_find_def 确认定义位置, 再 code_find_refs 看影响范围, 不要用 code_search 关键词瞎搜
-   - 陌生文件先用 code_outline 看大纲, 再决定读哪段
-   - 修改整个函数/类用 code_edit_symbol(按符号名替换, 内部AST定位), 比手动search_replace更可靠
+1. 理解(精确, AST优先, 必须遵守): project_analyze 看项目结构 → code_find_def 精确定位函数/类定义 → code_find_refs 看所有调用方(评估改动影响) → code_outline 看文件结构 → file_read 读具体内容
+   - 【强制】改任何函数/类前必须先 code_find_def 确认定义位置(文件+行号+签名), 再 code_find_refs 看影响范围(所有调用处), 绝对不要用 code_search 关键词瞎搜或凭记忆猜位置
+   - 【强制】陌生文件先用 code_outline 看结构大纲, 再决定读哪段, 不要整文件读浪费token
+   - 【强制】修改整个函数/类用 code_edit_symbol(按符号名替换, 内部AST精确定位), 比手动search_replace更可靠, 不要用code_exec反复试
+   - code_search 现在也走 AST 索引, 符号查询会返回[AST 定义]和[AST 引用]两类结果, 比grep精确
+   - 索引是实时的: file_write/code_edit 修改文件后自动增量更新AST索引, 不需要手动重建
 2. 方案: 明确改哪些文件, 小步修改, 改完验证再改下一个
 3. 执行: 小改动用 code_edit(search_replace, 搜索文本必须唯一), 整个函数/类用 code_edit_symbol, 新文件用 file_write
    - 没读文件前绝对不用 file_write 覆盖

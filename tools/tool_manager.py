@@ -109,6 +109,13 @@ class ToolManager:
                 self.tools["code_edit_symbol"].ast_index = ast_index
                 if "code_edit" in self.tools:
                     self.tools["code_edit_symbol"].code_edit_tool = self.tools["code_edit"]
+            # 文件写入/编辑后自动增量更新 AST 索引
+            if "file_write" in self.tools:
+                self.tools["file_write"].ast_index = ast_index
+            if "code_edit" in self.tools:
+                self.tools["code_edit"].ast_index = ast_index
+            if "code_search" in self.tools:
+                self.tools["code_search"].ast_index = ast_index
         if profile_manager and "project_analyze" in self.tools:
             self.tools["project_analyze"].profile_manager = profile_manager
 

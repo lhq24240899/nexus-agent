@@ -62,10 +62,11 @@ class FileReadTool(BaseTool):
 
 class FileWriteTool(BaseTool):
     name = "file_write"
-    description = "写入内容到本地文件。如果文件存在会覆盖。写入后自动更新代码符号索引。【何时用】创建新文件、大段重写已有文件。【不要用】不要用code_exec写持久文件(code_exec是临时环境,写完就删)。小修改用code_edit,不要整个文件重写。写之前必须先用file_read确认文件内容(避免覆盖)。"
+    description = "写入内容到本地文件。如果文件存在会覆盖。写入后自动更新代码符号索引(AST+正则)。【何时用】创建新文件、大段重写已有文件。【不要用】不要用code_exec写持久文件(code_exec是临时环境,写完就删)。小修改用code_edit,不要整个文件重写。写之前必须先用file_read确认文件内容(避免覆盖)。"
 
-    def __init__(self, code_index=None):
+    def __init__(self, code_index=None, ast_index=None):
         self.code_index = code_index
+        self.ast_index = ast_index
     params_schema = {
         "type": "object",
         "properties": {
@@ -84,9 +85,13 @@ class FileWriteTool(BaseTool):
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
-            # 写入后自动增量索引 (仅支持的语言文件)
+            # 写入后自动增量索引 (AST + 正则)
             if self.code_index:
-                self.code_index.index_file(str(p))
+                try: self.code_index.index_file(str(p))
+                except Exception: pass
+            if self.ast_index:
+                try: self.ast_index.index_file(str(p))
+                except Exception: pass
             return f"已写入 {len(content)} 字符到 {path}"
         except Exception as e:
             return f"写入失败: {e}"
