@@ -57,6 +57,29 @@ class SecretaryCore:
 (来自哪个库, 匹配度如何)
 """
 
+    FAIL_REFLECT_PROMPT = """你是 Nexus 双核 Agent 的秘书, 负责失败任务复盘。
+
+【你的任务】
+这个任务失败了, 请深入分析:
+1. 失败的根本原因是什么? (工具误用? 理解偏差? 环境问题? 能力不足?)
+2. 哪一步开始走错了?
+3. 如果重来一次, 正确的做法是什么?
+4. 提炼一条可复用的教训, 避免下次犯同样的错误
+
+【输出格式】
+## 失败原因
+(根本原因, 不要表面现象)
+
+## 关键错误步骤
+(哪一步开始错的, 为什么)
+
+## 正确做法
+(如果重来一次应该怎么做)
+
+## 可复用教训
+(一句话, 下次遇到类似情况时记住)
+"""
+
     REFLECT_PROMPT = """你是 Nexus 双核 Agent 的秘书, 负责经验复盘。
 
 【你的任务】
@@ -295,7 +318,7 @@ class SecretaryCore:
         result = list(selected)[:12]
         return result if result else None
 
-    def reflect(self, task: str, result: str, context: str, mode: str = "work", append_to_id: int = None) -> str:
+    def reflect(self, task: str, result: str, context: str, mode: str = "work", append_to_id: int = None, custom_prompt: str = None) -> str:
         """
         经验反思: 任务完成后复盘, 提炼可复用经验
         """
@@ -306,7 +329,7 @@ class SecretaryCore:
                 model=self.model,
                 temperature=0.3,
                 messages=[
-                    {"role": "system", "content": self.REFLECT_PROMPT},
+                    {"role": "system", "content": custom_prompt or self.REFLECT_PROMPT},
                     {"role": "user", "content": (
                         f"【任务】{task[:200]}\n\n"
                         f"【秘书递达的上下文】{context[:300]}\n\n"
@@ -392,6 +415,17 @@ class SecretaryCore:
 如果没有明确偏好, 回复"无明确偏好"。
 """
 
+    PROJECT_FACT_PROMPT = """你是项目事实提取器。
+【任务】从这次编码任务中提取关于当前项目的客观事实(技术栈/入口/配置/目录结构/关键约定)。
+【规则】
+1. 只提取客观事实, 不要猜测
+2. 格式: "项目事实: xxx"
+3. 例如: "项目事实: 后端用Flask, 入口是desktop.py"
+4. 例如: "项目事实: 数据库用SQLite, 存在data/目录"
+5. 例如: "项目事实: 前端用原生HTML+JS, 模板在ui/templates/"
+6. 如果没有新的项目事实, 回复"无新项目事实"
+"""
+
     KNOWLEDGE_EXTRACT_PROMPT = """你是知识提取器。
 【任务】从这次技术任务的结果中提取值得长期保存的通用技术知识。
 【规则】
@@ -403,13 +437,14 @@ class SecretaryCore:
 """
 
     def post_task_learning(self, task: str, result: str, context: str,
-                           tools_used: list = None, mode: str = "work"):
+                           tools_used: list = None, mode: str = "work",
+                           success: bool = True):
         """任务完成后的差异化沉淀入口, 按模式决定写哪些库"""
         if not self.configured:
             return
         try:
             if mode == "work":
-                self._learn_work(task, result, context, tools_used)
+                self._learn_work(task, result, context, tools_used, success)
             elif mode == "brainstorm":
                 self._learn_brainstorm(task, result)
             elif mode == "chat":
@@ -417,13 +452,15 @@ class SecretaryCore:
         except Exception as e:
             logger.log("secretary", "沉淀失败", str(e))
 
-    def _learn_work(self, task, result, context, tools_used):
-        """Work模式: 经验+工具技巧+任务记录+用户偏好"""
+    def _learn_work(self, task, result, context, tools_used, success=True):
+        """Work模式: 经验+工具技巧+任务记录+用户偏好. 失败任务强制复盘失败原因"""
         # 1. 经验库: 任务结果 (拿到 item_id, 后续反思合并到同一条)
-        result_item = self.record_result(task, result, tools_used=tools_used, mode="work")
+        result_item = self.record_result(task, result, tools_used=tools_used, success=success, mode="work")
         result_id = result_item.get("id") if isinstance(result_item, dict) else None
         # 2. 经验库: 反思 (合并到 task_result 条目, 不新建)
-        self.reflect(task, result, context, mode="work", append_to_id=result_id)
+        # 失败任务用专门的失败复盘提示词, 重点分析"为什么失败"和"下次怎么避免"
+        reflect_prompt = self.FAIL_REFLECT_PROMPT if not success else None
+        self.reflect(task, result, context, mode="work", append_to_id=result_id, custom_prompt=reflect_prompt)
         # 3. 工具库: 从工具使用中提炼技巧
         if tools_used:
             self._learn_tool_tips(tools_used, task, result)
@@ -431,7 +468,9 @@ class SecretaryCore:
         self._record_task_memory(task, result)
         # 5. 记忆库: 用户偏好提取
         self._extract_preferences(task, result, self.PREF_WORK_PROMPT, "work")
-        # 6. 知识库: 通用技术知识提取
+        # 6. 记忆库: 项目事实提取 (技术栈/入口/配置/目录结构, 长期保留)
+        self._extract_project_facts(task, result)
+        # 7. 知识库: 通用技术知识提取
         self._extract_knowledge(task, result)
 
     def _learn_brainstorm(self, task, result):
@@ -492,6 +531,39 @@ class SecretaryCore:
             f"完成过任务: {task[:80]} (结果长度: {len(result)}字)",
             meta={"type": "task_memory"},
         )
+
+    def _extract_project_facts(self, task, result):
+        """从编码任务中提取项目事实(技术栈/入口/配置/目录结构), 存入记忆库长期保留"""
+        try:
+            # 只有编码任务才提取项目事实
+            if not any(k in task for k in ["写", "代码", "实现", "修改", "修复", "文件", "函数", "重构", "开发"]):
+                return
+            resp = self.client.chat.completions.create(
+                model=self.model, temperature=0.2,
+                messages=[
+                    {"role": "system", "content": self.PROJECT_FACT_PROMPT},
+                    {"role": "user", "content": f"""【任务】{task[:200]}
+
+【结果】{result[:500]}
+
+请提取项目事实:"""},
+                ],
+            )
+            facts = resp.choices[0].message.content.strip()
+            if facts and "无新项目事实" not in facts:
+                for line in facts.split("\n"):
+                    line = line.strip().lstrip("-*0123456789. ")
+                    if line and "项目事实" in line and len(line) > 8:
+                        # 去重: 检查记忆库是否已有相同事实
+                        existing = self.libs.memory.search(line[:30], limit=5) if hasattr(self.libs.memory, 'search') else []
+                        if not any(line[:30] in (e.get('content','') if isinstance(e, dict) else str(e)) for e in existing):
+                            self.libs.memory.add(
+                                line,
+                                meta={"type": "project_fact", "importance": 5},
+                            )
+                            logger.log("secretary", "项目事实提取", line[:60])
+        except Exception as e:
+            logger.log("secretary", "项目事实提取失败", str(e))
 
     def _extract_preferences(self, task, result, prompt, mode):
         """从对话中提取用户偏好到记忆库"""
@@ -585,9 +657,14 @@ class SecretaryCore:
 【规则】
 1. 相似经验合并为一条, 去掉重复内容
 2. 去掉无价值的流水账(如单纯记录"做了什么任务")
-3. 保留真正可复用的模式、技巧、教训
+3. 【最高优先级】重要经验必须保留, 绝对不能压缩掉:
+   - 失败教训(为什么失败、下次怎么避免)
+   - 踩过的坑(具体的错误和解决方法)
+   - 关键决策(为什么选这个方案)
+   - 可复用的模式/技巧
 4. 每条经验简洁具体, 不超过80字
 5. 只输出精炼后的经验列表, 每条一行, 不要编号, 不要解释
+6. 如果重要经验超过 {keep} 条, 优先保留重要经验, 可以超过 {keep} 条
 
 【原始经验】
 {raw_experiences}

@@ -4,6 +4,7 @@
 关键: 搜索文本必须唯一匹配, 防止误替换; 编辑前自动读取确认; 编辑后显示 diff
 """
 import difflib
+import subprocess
 from pathlib import Path
 from tools.base_tool import BaseTool
 
@@ -14,6 +15,33 @@ ALLOWED_ROOTS = [
     Path("C:/Users/1"),
     Path.home(),
 ]
+
+
+def _git_diff_summary(path: str) -> str:
+    """获取文件的 git diff 摘要(变更行数), 不在git仓库则返回空"""
+    try:
+        p = Path(path).resolve()
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(p.parent), capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return ""
+        result = subprocess.run(
+            ["git", "diff", "--stat", str(p)],
+            cwd=str(p.parent), capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            return result.stdout.strip()
+        result = subprocess.run(
+            ["git", "status", "--short", str(p)],
+            cwd=str(p.parent), capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            return f"新文件: {result.stdout.strip()}"
+        return ""
+    except Exception:
+        return ""
 
 # 跳过的文件类型
 SKIP_EXTS = {
@@ -275,9 +303,12 @@ class CodeEditTool(BaseTool):
             except Exception:
                 pass
 
+        # 编辑后自动 git diff 摘要
+        git_diff = _git_diff_summary(str(path))
+        git_info = f"\n\n[Git变更]\n{git_diff}" if git_diff else ""
         return (f"✅ 编辑成功 ({action_desc})\n"
                 f"文件: {path}\n"
                 f"备份: {backup_path.name}\n"
                 f"原大小: {len(original)} 字符 → 新大小: {len(new_content)} 字符\n"
                 f"变更行数: +{new_content.count(chr(10)) - original.count(chr(10))} 行\n"
-                f"\n--- Diff ---\n{diff_preview}{lint_result}")
+                f"\n--- Diff ---\n{diff_preview}{lint_result}{git_info}")

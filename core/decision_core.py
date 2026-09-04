@@ -330,8 +330,10 @@ class DecisionCore:
 - 简单问题直接给答案, 不废话; 先结论后细节
 
 【工具选择原则 —— 减少无效调用, 违反则浪费token】
-- 写文件/创建脚本: 必须用 file_write 一次写完, 绝对不要用 code_exec 反复试写
-- code_exec 只用于运行验证(跑测试/看输出), 不用于创建文件
+- 【最高优先级】写持久文件/创建脚本: 必须第一次就用 file_write, 绝对禁止用 code_exec 试写! code_exec 检测到写文件会直接拦截, 反复试只会浪费token
+- 【最高优先级】code_exec 只用于运行验证(跑测试/看输出), 绝对不用于创建/写入文件
+- 【最高优先级】修改已有文件: 先 file_read 读内容 → code_edit 精准修改, 不要用 file_write 整文件覆盖(除非大改)
+- 【最高优先级】创建新文件: 直接 file_write, 不需要先 file_read(文件不存在读了也是错)
 - 修改已有文件: 小改用 code_edit, 大改用 file_write(先 file_read 读内容)
 - 查文件内容: 用 file_read, 不要用 code_exec 读文件
 - 列目录: 用 file_list, 不要用 code_exec 执行 ls
@@ -340,7 +342,7 @@ class DecisionCore:
 - 并行调用: 多个互不依赖的工具(同时读多个文件/同时搜索多关键词)在一次回复中同时发起, 框架自动并行执行, 不要串行一个个调
 - 【禁止无意义探索】创建新文件/新项目时, 绝对不要 file_list 列无关目录(如D盘根目录), 绝对不要 file_read 读旧项目/旧demo代码当参考, 用户给了路径就直接写
 - 【诊断用内联】排查问题时用 code_exec 直接写诊断代码运行, 绝对不要 file_write 写诊断脚本到temp/目录(浪费一次调用且留垃圾文件)
-- 【创建新文件不需要先读】用户要求创建新文件时, 直接 file_write, 不需要先 file_read 确认不存在
+- 【创建新文件直接写】用户要求创建新文件时, 直接 file_write 一次写完, 不需要先 file_read
 
 【编码工作流 —— 跑→错→修→再跑 闭环, 必须遵守】
 1. 理解(精确, AST优先, 必须遵守): project_analyze 看项目结构 → code_find_def 精确定位函数/类定义 → code_find_refs 看所有调用方(评估改动影响) → code_outline 看文件结构 → file_read 读具体内容
@@ -351,7 +353,7 @@ class DecisionCore:
    - 索引是实时的: file_write/code_edit 修改文件后自动增量更新AST索引, 不需要手动重建
 2. 方案: 明确改哪些文件, 小步修改, 改完验证再改下一个
 3. 执行: 小改动用 code_edit(search_replace, 搜索文本必须唯一), 整个函数/类用 code_edit_symbol, 新文件用 file_write
-   - 没读文件前绝对不用 file_write 覆盖
+   - 修改已有文件前必须先 file_read 读内容(防止覆盖); 创建新文件直接 file_write 不需要读
    - code_edit 搜索不到/不唯一时, 先用 file_read 确认实际内容(注意空格/缩进)
 4. 验证(必须, 闭环): code_exec 跑代码 → 看【结构化错误】中的错误类型/文件/行号/代码上下文 → 用 code_edit 精准修复报错行 → 再跑 code_exec 验证 → 循环直到通过
    - code_exec 返回的【结构化错误】包含精确的文件:行号和报错行上下文, 直接定位, 不要瞎猜

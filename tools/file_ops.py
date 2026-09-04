@@ -25,6 +25,36 @@ def _is_allowed(path: str) -> bool:
         return False
 
 
+def _git_diff_summary(path: str) -> str:
+    """获取文件的 git diff 摘要(变更行数), 不在git仓库则返回空"""
+    try:
+        p = Path(path).resolve()
+        # 检查是否在 git 仓库
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(p.parent), capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return ""
+        # 获取 diff --stat
+        result = subprocess.run(
+            ["git", "diff", "--stat", str(p)],
+            cwd=str(p.parent), capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            return result.stdout.strip()
+        # 新文件(未跟踪)用 git status
+        result = subprocess.run(
+            ["git", "status", "--short", str(p)],
+            cwd=str(p.parent), capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            return f"新文件: {result.stdout.strip()}"
+        return ""
+    except Exception:
+        return ""
+
+
 class FileReadTool(BaseTool):
     name = "file_read"
     description = "读取本地文件内容。支持文本文件(txt/py/md/json/csv等)。【何时用】需要查看文件内容时。【不要用】不要用code_exec执行open()读文件，不要用linux_terminal执行cat读文件。大文件先用file_list确认大小。"
@@ -106,7 +136,10 @@ class FileWriteTool(BaseTool):
                         lint_result = "\n\n[自动Lint]\n" + lint_output[:500]
                 except Exception:
                     pass
-            return f"已写入 {len(content)} 字符到 {path}{lint_result}"
+            # 写入后自动 git diff 摘要
+            git_diff = _git_diff_summary(str(p))
+            git_info = f"\n\n[Git变更]\n{git_diff}" if git_diff else ""
+            return f"已写入 {len(content)} 字符到 {path}{lint_result}{git_info}"
         except Exception as e:
             return f"写入失败: {e}"
 

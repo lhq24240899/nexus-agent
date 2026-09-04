@@ -569,7 +569,7 @@ class DualCoreAgent:
             reflection = "(秘书后台复盘中)"
             def _bg_learn():
                 try:
-                    self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode)
+                    self.secretary.post_task_learning(task, result, context, tools_used=tools_used, mode=actual_mode, success=not self.decision.last_had_tool_error)
                     if matched_skill:
                         self._record_and_improve_skill(
                             matched_skill, task, result, tools_used, t3 - t2,
