@@ -46,9 +46,18 @@ class CoderAgent(BaseAgent):
         return task
 
     def _parse_result(self, ctx: AgentContext, result: str) -> AgentContext:
-        # 提取代码块
+        # 智能提取代码块:
+        # 1. 优先取包含 def/class/import 的代码块(实现代码)
+        # 2. 其次取第一个代码块
+        # 3. 最后取最后一个代码块(兜底)
         code_blocks = re.findall(r"```(?:python)?\n(.*?)```", result, re.DOTALL)
         if code_blocks:
-            ctx.code = code_blocks[-1]  # 取最后一个代码块
+            # 优先找包含实现特征的代码块
+            impl_blocks = [b for b in code_blocks
+                           if any(k in b for k in ["def ", "class ", "import ", "from ", "print("])]
+            if impl_blocks:
+                ctx.code = impl_blocks[0]  # 取第一个实现代码块
+            else:
+                ctx.code = code_blocks[0]  # 取第一个
         ctx.metadata["coder_output"] = result
         return ctx

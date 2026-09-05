@@ -35,9 +35,10 @@ class RouteResult:
 class AgentRouter:
     """动态路由器: 根据意图选择执行策略"""
 
-    def __init__(self, tool_manager=None):
+    def __init__(self, tool_manager=None, stop_event=None):
         self.intent_analyzer = IntentAnalyzer()
         self.tool_manager = tool_manager
+        self.stop_event = stop_event
         # 懒加载 agent 池 (避免初始化时就创建所有 agent)
         self._agent_pool: dict[str, Any] = {}
 
@@ -83,6 +84,8 @@ class AgentRouter:
             max_rounds=3,
             auto_fix=True,
             name="coding_pipeline",
+            stop_event=self.stop_event,
+            timeout_s=300.0,
         )
         result = pipeline.run(task)
 

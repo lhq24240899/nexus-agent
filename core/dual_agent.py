@@ -532,7 +532,14 @@ class DualCoreAgent:
         # ---- Multi-Agent 动态路由 (仅 work 模式) ----
         if not is_light:
             try:
-                route_result = self.agent_router.route(task, mode=actual_mode)
+                # 创建 stop_event 并传给 router, 支持用户中断流水线
+                self._stop_event = threading.Event()
+                self.agent_router.stop_event = self._stop_event
+                try:
+                    route_result = self.agent_router.route(task, mode=actual_mode)
+                finally:
+                    self._stop_event = None
+                    self.agent_router.stop_event = None
                 if route_result.handled:
                     logger.log("multi_agent", "路由命中",
                                f"strategy={route_result.strategy}, task={task[:40]}")

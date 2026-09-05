@@ -34,10 +34,13 @@ class Intent:
 
 # 关键词快速匹配 (第一层, 省 API 调用)
 CODING_KEYWORDS = [
-    "写代码", "写一个", "实现", "函数", "算法", "脚本", "程序",
-    "开发", "编码", "编程", "生成代码", "创建文件", "修改代码",
-    "修复", "重构", "debug", "调试", "bug", "类", "方法",
-    "api", "接口", "模块", "组件", "功能", "feature",
+    # 明确表示"要写/改代码"的词
+    "写代码", "写一个", "实现", "生成代码", "创建文件", "修改代码",
+    "开发", "编码", "编程", "脚本", "程序",
+    # 明确表示"要修bug"的词
+    "修复", "重构", "debug", "调试", "bug",
+    # 工程复杂度词
+    "搭建", "部署", "架构", "系统设计",
 ]
 RESEARCH_KEYWORDS = [
     "调研", "搜索", "查一下", "最新", "对比", "分析", "研究",
@@ -201,5 +204,9 @@ class IntentAnalyzer:
                 confidence=float(data.get("confidence", 0.5)),
             )
         except Exception as e:
-            logger.log("intent", "LLM解析失败", f"{e}: {content[:100] if 'content' in dir() else ''}")
+            try:
+                err_detail = content[:100] if 'content' in locals() else ''
+            except Exception:
+                err_detail = ''
+            logger.log("intent", "LLM解析失败", f"{e}: {err_detail}")
             return None
