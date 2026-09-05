@@ -79,7 +79,7 @@ def truncate_tool_result(result: str, max_chars: int = MAX_TOOL_RESULT_CHARS) ->
     keep_tail = max_chars - keep_head - 50
     return (
         result[:keep_head]
-        + f"\n\n... [已截断, 原长度 {len(result)} 字符, 省略中间部分] ...\n\n"
+        + "\n\n... [已截断, 省略中间部分] ...\n\n"
         + result[-keep_tail:]
     )
 

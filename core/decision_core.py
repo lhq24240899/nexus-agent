@@ -283,7 +283,7 @@ class DecisionCore:
                     fail_count = self.consecutive_code_failures
                     if fail_count >= 3:
                         repair_hint = (
-                            f"\n\n[自修复闭环] 已连续失败 {fail_count} 次! "
+                            "\n\n[自修复闭环] 已连续失败多次! "
                             "当前方法行不通, 必须换一种思路: "
                             "1) 重新用 file_read 读文件确认实际内容(不要凭记忆) "
                             "2) 检查是否路径错误/文件不存在/依赖缺失 "
@@ -293,7 +293,7 @@ class DecisionCore:
                         self.consecutive_code_failures = 0  # 重置, 给新方法机会
                     else:
                         repair_hint = (
-                            f"\n\n[自修复闭环] 代码执行失败(第{fail_count}次)! "
+                            "\n\n[自修复闭环] 代码执行失败! "
                             "你必须: 1) 仔细阅读上面的错误信息 "
                             "2) 用 code_edit 精确修改出错的代码 "
                             "3) 用 code_exec 重新验证 "
@@ -500,43 +500,11 @@ class DecisionCore:
         return [f for f in all_funcs
                 if f.get("function", {}).get("name") in allowed]
 
-    def _build_dynamic_rules(self, task: str) -> str:
-        """根据任务关键词动态注入相关规则, 不相关的不注入, 节省token"""
-        rules = []
-        t = task.lower()
-
-        # 安装/下载/编译类任务
-        if any(k in t for k in ["install", "安装", "pip", "npm", "下载", "compile", "编译", "playwright", "依赖"]):
-            rules.append("安装依赖/下载/编译必须用 linux_terminal, 绝对不要用 code_exec(只有15秒超时)")
-
-        # 创建/写文件类任务
-        if any(k in t for k in ["创建", "写", "生成", "create", "write", "实现", "搭建", "新建", "demo", "脚本"]):
-            rules.append("写文件/创建脚本必须用 file_write 一次写完, 绝对不要用 code_exec 反复试写")
-            rules.append("修改已有文件: 小改用 code_edit, 大改用 file_write(先 file_read 读内容)")
-
-        # 多文件/批量任务
-        if any(k in t for k in ["多个", "同时", "批量", "multi", "所有", "全部文件"]):
-            rules.append("多个互不依赖的工具(同时读多个文件/同时搜索多关键词)在一次回复中同时发起, 框架自动并行执行")
-
-        # 搜索/调研类任务
-        if any(k in t for k in ["搜索", "search", "调研", "查一下", "最新", "新闻", "股价", "行情"]):
-            rules.append("需要实时信息用 web_search, 本地代码问题用 code_search/file_read, 不要混淆")
-
-        # 读文件/查内容类任务
-        if any(k in t for k in ["读", "read", "查看", "看一下", "内容", "文件里"]):
-            rules.append("读文件用 file_read, 列目录用 file_list, 不要用 code_exec 或 linux_terminal 做这些")
-
-        if not rules:
-            return ""
-        return "\n【动态规则】\n" + "\n".join(f"- {r}" for r in rules)
-
     def _build_messages(self, task, context, history_text):
         history_section = f"\n\n【历史对话】\n{history_text}" if history_text else ""
-        dynamic_rules = self._build_dynamic_rules(task)
         user_content = (
             f"【任务】\n{task}\n\n"
             f"【秘书递达的上下文】\n{context}"
-            f"{dynamic_rules}"
             f"{history_section}"
         )
         return [

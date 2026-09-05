@@ -362,6 +362,64 @@
     transition: all 0.15s; flex-shrink: 0;
   }
   .upload-btn:hover { background: #30363d; color: #c9d1d9; border-color: #8b949e; }
+  .mic-btn {
+    background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    width: 40px; height: 40px; border-radius: 8px; cursor: pointer;
+    font-size: 18px; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0;
+  }
+  .mic-btn:hover { background: #30363d; color: #c9d1d9; border-color: #8b949e; }
+  .mic-btn.recording {
+    background: #da3633; border-color: #f85149; color: #fff;
+    animation: mic-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(248,81,73,0); }
+  }
+  .voice-toggle-wrap {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e;
+    margin-left: auto;
+  }
+  .voice-toggle {
+    position: relative; width: 34px; height: 20px;
+    background: #30363d; border-radius: 10px; cursor: pointer;
+    transition: background 0.2s; border: none; padding: 0; flex-shrink: 0;
+  }
+  .voice-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; background: #8b949e; border-radius: 50%;
+    transition: all 0.2s;
+  }
+  .voice-toggle.on { background: #238636; }
+  .voice-toggle.on::after { left: 16px; background: #fff; }
+  .tts-playing { color: #3fb950; }
+  .wake-toggle-wrap {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e;
+  }
+  .wake-toggle {
+    position: relative; width: 34px; height: 20px;
+    background: #30363d; border-radius: 10px; cursor: pointer;
+    transition: background 0.2s; border: none; padding: 0; flex-shrink: 0;
+  }
+  .wake-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; background: #8b949e; border-radius: 50%;
+    transition: all 0.2s;
+  }
+  .wake-toggle.on { background: #1f6feb; }
+  .wake-toggle.on::after { left: 16px; background: #fff; }
+  .wake-status {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: #21262d; color: #8b949e; white-space: nowrap;
+  }
+  .wake-status.waiting { color: #8b949e; }
+  .wake-status.listening { color: #f0883e; background: rgba(240,136,62,0.15); }
+  .wake-status.processing { color: #1f6feb; background: rgba(31,111,235,0.15); }
+  .mic-btn.wake-active {
+    background: #1f6feb; border-color: #388bfd; color: #fff;
+    animation: mic-pulse 2s ease-in-out infinite;
+  }
   .file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; min-height: 0; }
   .file-chip {
     display: flex; align-items: center; gap: 6px;
@@ -699,6 +757,15 @@
           <span>Secretary</span>
           <button class="sec-toggle on" id="secretary-toggle" onclick="toggleSecretary()"></button>
         </div>
+        <div class="voice-toggle-wrap">
+          <span title="自动语音播报">TTS</span>
+          <button class="voice-toggle" id="voice-toggle" onclick="toggleVoice()"></button>
+        </div>
+        <div class="wake-toggle-wrap">
+          <span title="唤醒词模式: 说豆包/nexus唤醒">唤醒</span>
+          <button class="wake-toggle" id="wake-toggle" onclick="toggleWakeMode()"></button>
+          <span class="wake-status waiting" id="wake-status">待机</span>
+        </div>
       </div>
       <div class="error-banner" id="error-banner">
         <span id="error-msg"></span>
@@ -707,6 +774,7 @@
       <div class="file-chips" id="file-chips"></div>
       <div class="input-row">
         <button class="upload-btn" onclick="openUploadModal()" title="Attach files">📎</button>
+        <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="语音输入 (点击开始/停止)">🎤</button>
         <textarea id="user-input" placeholder="Enter task... (Enter to send, Shift+Enter for newline)"></textarea>
         <button id="send-btn" onclick="sendMessage()">Send</button>
       </div>
@@ -1701,6 +1769,10 @@ async function sendMessage() {
       `<div class="meta">Nexus · ${fastBadge} Time ${timing.total_s}s · Decision ${timing.decision_s}s · Tokens ${tokens.total} (in ${tokens.input} / out ${tokens.output})</div>` +
       buildActions('nexus', respDiv);
     loadLogs(); loadCost(); loadStats();
+    // 自动语音播报
+    if (voiceAutoPlay && fullText) {
+      speakText(fullText);
+    }
   } catch (e) {
     if (e.name === 'AbortError') {
       bubble.textContent = fullText + '\n\n(Stopped)';
@@ -2235,5 +2307,343 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 </div>
+
+<!-- ============ 语音交互 ============ -->
+<script>
+let voiceAutoPlay = false;
+let isRecording = false;
+let recognition = null;
+let currentAudio = null;
+
+function toggleVoice() {
+  const btn = document.getElementById('voice-toggle');
+  voiceAutoPlay = !voiceAutoPlay;
+  btn.classList.toggle('on', voiceAutoPlay);
+  if (!voiceAutoPlay && currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+}
+
+function toggleMic() {
+  const btn = document.getElementById('mic-btn');
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+function startRecording() {
+  const btn = document.getElementById('mic-btn');
+  const input = document.getElementById('user-input');
+
+  // 检查浏览器支持
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert('当前浏览器不支持语音识别, 请使用 Chrome 或 Edge');
+    return;
+  }
+
+  recognition = new SR();
+  recognition.lang = 'zh-CN';
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  let finalText = '';
+
+  recognition.onstart = function() {
+    isRecording = true;
+    btn.classList.add('recording');
+    btn.title = '正在录音... 点击停止';
+    input.placeholder = '正在聆听... 说话吧';
+  };
+
+  recognition.onresult = function(event) {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalText += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+    input.value = finalText + interim;
+  };
+
+  recognition.onerror = function(event) {
+    console.error('语音识别错误:', event.error);
+    if (event.error === 'not-allowed') {
+      alert('请允许麦克风权限');
+    }
+    stopRecording();
+  };
+
+  recognition.onend = function() {
+    stopRecording();
+    // 识别结束后自动发送
+    const msg = input.value.trim();
+    if (msg && !isGenerating) {
+      sendMessage();
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (e) {
+    console.error('启动录音失败:', e);
+    stopRecording();
+  }
+}
+
+function stopRecording() {
+  const btn = document.getElementById('mic-btn');
+  const input = document.getElementById('user-input');
+  isRecording = false;
+  btn.classList.remove('recording');
+  btn.title = '语音输入 (点击开始/停止)';
+  input.placeholder = 'Enter task... (Enter to send, Shift+Enter for newline)';
+  if (recognition) {
+    try { recognition.stop(); } catch (e) {}
+    recognition = null;
+  }
+}
+
+async function speakText(text) {
+  if (!text || !text.trim()) return;
+  // 停止当前播放
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  try {
+    // 提取纯文本 (去掉 markdown 标记)
+    const plainText = text
+      .replace(/```[\s\S]*?```/g, ' [代码] ')
+      .replace(/`[^`]*`/g, '')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/^#+\s*/gm, '')
+      .replace(/[-*]\s+/g, '')
+      .trim();
+    if (!plainText) return;
+
+    const resp = await fetch('/api/tts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: plainText, voice: 'zh-CN-XiaoxiaoNeural'}),
+    });
+    if (!resp.ok) {
+      console.error('TTS 请求失败:', resp.status);
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
+    currentAudio.onended = function() {
+      URL.revokeObjectURL(url);
+      currentAudio = null;
+    };
+    currentAudio.play().catch(e => console.error('播放失败:', e));
+  } catch (e) {
+    console.error('TTS 异常:', e);
+  }
+}
+
+// ============ 唤醒词模式 ============
+let wakeMode = false;
+let wakeState = 'idle';  // idle | waiting | listening | processing
+let wakeRecognition = null;
+let wakeCommandText = '';
+let wakeSilenceTimer = null;
+let wakeReconnectTimer = null;
+const WAKE_WORDS = ['豆包', 'doubao', 'nexus', '嘿nexus', '你好nexus'];
+
+function toggleWakeMode() {
+  const btn = document.getElementById('wake-toggle');
+  if (wakeMode) {
+    stopWakeMode();
+  } else {
+    startWakeMode();
+  }
+}
+
+function setWakeState(state) {
+  wakeState = state;
+  const statusEl = document.getElementById('wake-status');
+  const micBtn = document.getElementById('mic-btn');
+  if (!statusEl) return;
+  const labels = {idle: '待机', waiting: '待唤醒', listening: '聆听中', processing: '处理中'};
+  statusEl.textContent = labels[state] || state;
+  statusEl.className = 'wake-status ' + state;
+  if (micBtn) {
+    micBtn.classList.toggle('wake-active', state === 'listening' || state === 'waiting');
+  }
+}
+
+function playWakeTone(freq) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = freq;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.2);
+  } catch (e) {}
+}
+
+function startWakeMode() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert('当前浏览器不支持语音识别, 无法使用唤醒模式');
+    return;
+  }
+  wakeMode = true;
+  document.getElementById('wake-toggle').classList.add('on');
+  setWakeState('waiting');
+  startWakeListening();
+}
+
+function stopWakeMode() {
+  wakeMode = false;
+  document.getElementById('wake-toggle').classList.remove('on');
+  if (wakeRecognition) {
+    try { wakeRecognition.stop(); } catch (e) {}
+    wakeRecognition = null;
+  }
+  if (wakeSilenceTimer) { clearTimeout(wakeSilenceTimer); wakeSilenceTimer = null; }
+  if (wakeReconnectTimer) { clearTimeout(wakeReconnectTimer); wakeReconnectTimer = null; }
+  setWakeState('idle');
+}
+
+function startWakeListening() {
+  if (!wakeMode) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  wakeRecognition = new SR();
+  wakeRecognition.lang = 'zh-CN';
+  wakeRecognition.continuous = true;
+  wakeRecognition.interimResults = true;
+
+  wakeRecognition.onresult = function(event) {
+    let transcript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript;
+    }
+    transcript = transcript.trim().toLowerCase();
+
+    if (wakeState === 'waiting') {
+      // 检测唤醒词
+      for (const word of WAKE_WORDS) {
+        if (transcript.includes(word.toLowerCase())) {
+          // 唤醒成功
+          playWakeTone(880);
+          setWakeState('listening');
+          wakeCommandText = '';
+          // 重置识别: 停止后重启, 清空缓冲区
+          try { wakeRecognition.stop(); } catch (e) {}
+          return;
+        }
+      }
+    } else if (wakeState === 'listening') {
+      wakeCommandText = transcript;
+      // 重置静音计时器
+      if (wakeSilenceTimer) clearTimeout(wakeSilenceTimer);
+      wakeSilenceTimer = setTimeout(() => {
+        // 2秒无新输入, 认为指令结束
+        sendWakeCommand();
+      }, 2000);
+    }
+  };
+
+  wakeRecognition.onerror = function(event) {
+    if (event.error === 'not-allowed') {
+      alert('请允许麦克风权限以使用唤醒模式');
+      stopWakeMode();
+    } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+      console.warn('唤醒监听错误:', event.error);
+    }
+  };
+
+  wakeRecognition.onend = function() {
+    if (!wakeMode) return;
+    if (wakeState === 'listening' && wakeCommandText) {
+      // 监听结束且有指令, 发送
+      sendWakeCommand();
+    } else {
+      // 正常中断, 自动重连
+      wakeReconnectTimer = setTimeout(() => {
+        if (wakeMode && wakeState !== 'processing') {
+          startWakeListening();
+        }
+      }, 500);
+    }
+  };
+
+  try {
+    wakeRecognition.start();
+  } catch (e) {
+    console.warn('唤醒监听启动失败, 重试:', e);
+    wakeReconnectTimer = setTimeout(() => {
+      if (wakeMode) startWakeListening();
+    }, 1000);
+  }
+}
+
+function sendWakeCommand() {
+  if (wakeSilenceTimer) { clearTimeout(wakeSilenceTimer); wakeSilenceTimer = null; }
+  const cmd = wakeCommandText.trim();
+  if (!cmd || isGenerating) {
+    setWakeState('waiting');
+    wakeCommandText = '';
+    return;
+  }
+  // 去掉可能残留的唤醒词
+  let cleanCmd = cmd;
+  for (const word of WAKE_WORDS) {
+    cleanCmd = cleanCmd.replace(new RegExp(word, 'gi'), '').trim();
+  }
+  if (!cleanCmd) {
+    setWakeState('waiting');
+    return;
+  }
+  setWakeState('processing');
+  playWakeTone(440);
+  // 填入输入框并发送
+  const input = document.getElementById('user-input');
+  input.value = cleanCmd;
+  wakeCommandText = '';
+  // 延迟发送, 让状态更新
+  setTimeout(() => {
+    sendMessage();
+    // 发送完成后回到待唤醒状态 (sendMessage 完成后由回调触发)
+    const checkDone = setInterval(() => {
+      if (!isGenerating) {
+        clearInterval(checkDone);
+        if (wakeMode) setWakeState('waiting');
+      }
+    }, 500);
+  }, 100);
+}
+
+// 页面加载时检查语音识别支持
+window.addEventListener('load', function() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    const btn = document.getElementById('mic-btn');
+    if (btn) {
+      btn.style.opacity = '0.4';
+      btn.title = '当前浏览器不支持语音识别, 请使用 Chrome/Edge';
+    }
+    const wakeBtn = document.getElementById('wake-toggle');
+    if (wakeBtn) { wakeBtn.style.opacity = '0.4'; wakeBtn.title = '浏览器不支持语音识别'; }
+  }
+});
+</script>
 </body>
 </html>

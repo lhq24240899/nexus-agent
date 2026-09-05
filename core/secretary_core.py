@@ -96,7 +96,7 @@ class SecretaryCore:
         """
         核心功能: 预判决策核心需要什么
         1. 从四库向量检索 (按模式差异化权重)
-        2. 结合历史对话, 用 LLM 筛选整理
+        2. 直接注入结构化结果 (保证前缀稳定, 省LLM调用)
         """
         logger.log("secretary", "预判检索开始", f"任务: {task[:50]}, 模式: {mode}")
 
@@ -107,7 +107,7 @@ class SecretaryCore:
             if items:
                 raw_parts.append(f"【{lib_name}】")
                 for it in items:
-                    raw_parts.append(f"  [匹配度 {it.get('score', 0)}] {it['content']}")
+                    raw_parts.append(f"  [匹配度 {round(it.get('score', 0), 2)}] {it['content']}")
         raw_context = "\n".join(raw_parts) if raw_parts else "(四库无相关内容)"
 
         total_found = sum(len(v) for v in results.values())
@@ -129,30 +129,9 @@ class SecretaryCore:
             )
             logger.log("secretary", "硬规则触发", "修复类任务, 已注入自我验证工作流")
 
-        # Step 2: LLM 筛选整理 (含历史对话)
-        history_section = f"\n\n【历史对话】\n{history_text}" if history_text else ""
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            temperature=self.temperature,
-            messages=[
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"【用户任务】\n{task}"
-                    f"{history_section}\n\n"
-                    f"【检索到的原始信息】\n{raw_context}\n\n"
-                    f"请整理决策核心需要的上下文:"
-                )},
-            ],
-        )
-        filtered = resp.choices[0].message.content.strip()
-        usage = resp.usage
-        cost_tracker.record(
-            model=self.model,
-            input_tokens=usage.prompt_tokens,
-            output_tokens=usage.completion_tokens,
-            task=f"秘书整理: {task[:30]}",
-        )
-        logger.log("secretary", "上下文整理完成", f"递达 {len(filtered)} 字")
+        # Step 2: 直接使用结构化检索结果 (去掉LLM二次整理, 保证前缀稳定+省一次调用)
+        filtered = raw_context
+        logger.log("secretary", "上下文就绪", f"结构化递达 {len(filtered)} 字")
 
         # 四库主动注入: 把高相关沉淀以结构化格式追加到上下文, 确保决策核心能看到
         library_injection = self._build_library_injection(results, task)

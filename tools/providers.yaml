@@ -87,3 +87,53 @@
   description: 代码lint检查和自动格式化(Python ruff/JS prettier/Go gofmt)
   category: code
   enabled: true
+
+- name: open_app
+  label: 打开应用
+  description: 打开Windows本地应用程序, 支持 chrome/edge/notepad/vscode/wechat/word/excel 等常见应用, 也支持完整路径
+  category: system
+- name: volume_control
+  label: 音量控制
+  description: 控制系统音量, 支持设置音量百分比、静音/取消静音、获取当前音量
+  category: system
+- name: lock_screen
+  label: 锁屏
+  description: 锁定Windows屏幕, 用户需重新登录
+  category: system
+- name: screenshot
+  label: 截图
+  description: 截取当前屏幕并保存到 temp/ 目录, 返回文件路径
+  category: system
+- name: system_info
+  label: 系统信息
+  description: "获取系统信息: 操作系统/CPU/内存/磁盘/CPU使用率"
+  category: system
+- name: run_command
+  label: 系统命令
+  description: 执行Windows系统命令(cmd/powershell), 用于系统管理, 危险操作(删除/关机/注册表)会被拦截
+  category: system
+
+- name: browser_open
+  label: 打开网页
+  description: 在Chrome浏览器中打开指定网址, 浏览器窗口保持打开供后续操作
+  category: browser
+- name: browser_click
+  label: 点击元素
+  description: 点击网页中的按钮/链接/元素, 支持CSS选择器、text=文本、role=类型
+  category: browser
+- name: browser_type
+  label: 输入文本
+  description: 在网页输入框中输入文本, 支持自动回车提交
+  category: browser
+- name: browser_get_text
+  label: 抓取文本
+  description: 获取网页内容, 不传选择器返回整页文本, 传选择器返回匹配元素文本, 用于抓数据
+  category: browser
+- name: browser_screenshot
+  label: 浏览器截图
+  description: 对当前浏览器页面截图保存到temp/目录
+  category: browser
+- name: browser_close
+  label: 关闭浏览器
+  description: 关闭浏览器窗口释放资源, 任务完成后调用
+  category: browser

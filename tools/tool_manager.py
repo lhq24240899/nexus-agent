@@ -27,6 +27,14 @@ from tools.cleanup import CleanupTempTool
 from tools.code_ast_tools import CodeFindDefTool, CodeFindRefsTool, CodeOutlineTool
 from tools.code_edit_symbol import CodeEditSymbolTool
 from tools.code_lint import CodeLintTool
+from tools.system_control import (
+    OpenAppTool, VolumeControlTool, LockScreenTool,
+    ScreenshotTool, SystemInfoTool, RunCommandTool,
+)
+from tools.browser_automation import (
+    BrowserOpenTool, BrowserClickTool, BrowserTypeTool,
+    BrowserGetTextTool, BrowserScreenshotTool, BrowserCloseTool,
+)
 
 PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
 
@@ -75,6 +83,18 @@ class ToolManager:
         "code_outline": CodeOutlineTool,
         "code_edit_symbol": CodeEditSymbolTool,
         "code_lint": CodeLintTool,
+        "open_app": OpenAppTool,
+        "volume_control": VolumeControlTool,
+        "lock_screen": LockScreenTool,
+        "screenshot": ScreenshotTool,
+        "system_info": SystemInfoTool,
+        "run_command": RunCommandTool,
+        "browser_open": BrowserOpenTool,
+        "browser_click": BrowserClickTool,
+        "browser_type": BrowserTypeTool,
+        "browser_get_text": BrowserGetTextTool,
+        "browser_screenshot": BrowserScreenshotTool,
+        "browser_close": BrowserCloseTool,
     }
 
     def __init__(self, linux_embed=None, code_index=None, profile_manager=None, ast_index=None):

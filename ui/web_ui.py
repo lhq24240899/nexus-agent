@@ -583,6 +583,30 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ============ 语音 TTS ============
+    @app.route("/api/tts", methods=["POST"])
+    def tts():
+        """文本转语音, 返回 mp3 音频"""
+        data = request.get_json(silent=True) or {}
+        text = (data.get("text") or "").strip()
+        voice = data.get("voice", "zh-CN-XiaoxiaoNeural")
+        rate = data.get("rate", "+0%")
+        if not text:
+            return jsonify({"error": "text 不能为空"}), 400
+        if len(text) > 2000:
+            text = text[:2000]
+        from utils.tts import tts_generate
+        audio = tts_generate(text, voice=voice, rate=rate)
+        if not audio:
+            return jsonify({"error": "TTS 生成失败"}), 500
+        return Response(audio, mimetype="audio/mpeg",
+                        headers={"Content-Disposition": "inline; filename=tts.mp3"})
+
+    @app.route("/api/tts/voices", methods=["GET"])
+    def tts_voices():
+        from utils.tts import list_voices
+        return jsonify(list_voices())
+
     return app
 
 
