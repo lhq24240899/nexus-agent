@@ -137,7 +137,7 @@ class DualCoreAgent:
         except Exception as e:
             logger.log("system", "工作目录切换失败", str(e))
         self._chat_tools = ["web_search", "current_time"]
-        self._brainstorm_tools = ["web_search", "current_time"]  # 头脑风暴也用轻量工具
+        self._brainstorm_tools = ["current_time"]  # 脑暴模式: 纯发散思维, 不搜索, 避免疯狂调web_search
 
     def set_mode(self, mode: str) -> str:
         """切换会话模式并立即应用到决策核心, 同时切换对话历史, 返回实际生效的模式"""
@@ -604,9 +604,10 @@ class DualCoreAgent:
                 context += "\n\n" + temp_hint
             if profile_hint:
                 context += "\n\n" + profile_hint
-            # 聊天模式固定白名单工具; 普通快速通道做关键词筛选
+            # 聊天/脑暴模式固定白名单工具; 普通快速通道做关键词筛选
             if is_light:
-                allowed_tools = list(self._chat_tools)  # chat 和 brainstorm 都用轻量工具
+                # chat用web_search+current_time, brainstorm只用current_time(纯发散)
+                allowed_tools = list(self._brainstorm_tools if actual_mode == "brainstorm" else self._chat_tools)
             else:
                 allowed_tools = self.secretary._select_tools(task) if self.secretary.tool_manager else None
             t2 = time.time()
@@ -720,7 +721,7 @@ class DualCoreAgent:
         if fast_path:
             yield {"type": "status", "message": "轻量模式: 直接回答中..." if is_light else "快速通道: 直接回答中..."}
             context = "(轻量模式: 精简上下文, 仅可查实时信息)" if is_light else "(快速通道: 未启用秘书检索)"
-            allowed_tools = list(self._chat_tools) if is_light else (
+            allowed_tools = list(self._brainstorm_tools if actual_mode == "brainstorm" else self._chat_tools) if is_light else (
                 self.secretary._select_tools(task) if self.secretary.tool_manager else None)
             secretary_time = 0
             matched_skill = None
