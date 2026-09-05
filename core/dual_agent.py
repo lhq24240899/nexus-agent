@@ -121,6 +121,9 @@ class DualCoreAgent:
         self.task_history: list[dict] = []
         self._index_building = False  # 代码索引是否正在后台构建
         self._stop_event = None  # 当前任务的停止事件
+        # Multi-Agent 动态路由器 (意图识别 + 编码流水线)
+        from core.agents.router import AgentRouter
+        self.agent_router = AgentRouter(tool_manager=self.tool_manager)
         # 会话级模式 (必须在 _load_conversation 之前初始化)
         self.current_mode = "work"
         # 按模式分开存储对话历史: work(编码) / chat(聊天) / brainstorm(头脑风暴)
@@ -525,6 +528,35 @@ class DualCoreAgent:
         self.conversation = self.conversations.get(actual_mode, [])
         conv = self.conversation  # 本地引用: 任务执行期间即使切换模式也不会串台
         is_light = actual_mode in ("chat", "brainstorm")
+
+        # ---- Multi-Agent 动态路由 (仅 work 模式) ----
+        if not is_light:
+            try:
+                route_result = self.agent_router.route(task, mode=actual_mode)
+                if route_result.handled:
+                    logger.log("multi_agent", "路由命中",
+                               f"strategy={route_result.strategy}, task={task[:40]}")
+                    result = route_result.output
+                    conv.append({"role": "user", "content": task})
+                    conv.append({"role": "assistant", "content": result})
+                    self._save_conversation(skip_index=False, mode=actual_mode, conv=conv)
+                    return {
+                        "task": task,
+                        "context": f"[multi-agent:{route_result.strategy}]",
+                        "result": result,
+                        "reflection": "(multi-agent 流水线执行)",
+                        "timing": {
+                            "secretary_s": 0,
+                            "decision_s": round(time.time() - t0, 2),
+                            "total_s": round(time.time() - t0, 2),
+                        },
+                        "cost": cost_tracker.today_cost(),
+                        "tools_used": [],
+                        "mode": actual_mode,
+                        "multi_agent": route_result.to_dict(),
+                    }
+            except Exception as e:
+                logger.log("multi_agent", "路由异常, 回退单agent", str(e))
 
         # 聊天/头脑风暴模式: 强制快速通道, 不调秘书, 用精简提示词+白名单工具+轻量模型
         if is_light:

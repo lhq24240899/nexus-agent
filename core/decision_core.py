@@ -19,7 +19,7 @@ from core.context_manager import ContextManager, truncate_tool_result, count_mes
 class DecisionCore:
     """决策核心: 接收任务 + 秘书整理的上下文 + 历史对话, 可调用工具"""
 
-    def __init__(self, tool_manager=None):
+    def __init__(self, tool_manager=None, custom_system_prompt: str | None = None):
         api_key = DECISION_CONFIG["api_key"] or "sk-not-configured"
         self.client = OpenAI(
             base_url=DECISION_CONFIG["base_url"],
@@ -30,6 +30,7 @@ class DecisionCore:
         self.temperature = DECISION_CONFIG["temperature"]
         self.configured = bool(DECISION_CONFIG["api_key"])
         self.tool_manager = tool_manager
+        self.custom_system_prompt = custom_system_prompt  # 自定义 system prompt (multi-agent 角色用)
         self.max_tool_calls = 50  # 解除限制, 复杂任务需要更多工具调用
         self.last_tools_used: list[str] = []
         # 本轮决策中工具执行失败的次数 (成功判定依据, 每次 decide 开头重置)
@@ -55,6 +56,8 @@ class DecisionCore:
         return self.override_model or self.model
 
     def _active_system_prompt(self) -> str:
+        if self.custom_system_prompt:
+            return self.custom_system_prompt
         if self.mode == "chat":
             return self.CHAT_SYSTEM_PROMPT
         if self.mode == "brainstorm":
